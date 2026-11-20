@@ -66,7 +66,8 @@ class RemoteAgentService : Service() {
             return START_NOT_STICKY
         }
 
-        SignalingRepository.connect(config)
+        runCatching { SignalingRepository.connect(config) }
+            .onFailure { Log.e(TAG, "signaling connect failed", it) }
         return START_STICKY
     }
 

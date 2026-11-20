@@ -1,6 +1,7 @@
 package com.yuesf.remotecontrol.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
 import android.graphics.Path
@@ -104,6 +105,48 @@ class RemoteAccessibilityService : AccessibilityService() {
             )
             .build()
         return dispatchGesture(gesture, null, null)
+    }
+
+    /**
+     * 读取系统实际下发的无障碍能力，并在需要时真实派发一次手势做实测。
+     * 部分厂商 ROM 会忽略 canPerformGestures，仅凭 manifest 无法判断，只能靠实派验证。
+     */
+    fun evaluateCapabilities(testGesture: Boolean): CapabilityReport {
+        val capabilities = serviceInfo?.capabilities ?: 0
+        val canPerformGestures =
+            capabilities and AccessibilityServiceInfo.CAPABILITY_CAN_PERFORM_GESTURES != 0
+        val canTakeScreenshot = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            capabilities and AccessibilityServiceInfo.CAPABILITY_CAN_TAKE_SCREENSHOT != 0
+
+        val gestureDispatch = if (!testGesture) {
+            null
+        } else {
+            val metrics = resources.displayMetrics
+            // 屏幕左边缘 1ms 轻点，副作用最小，仅用于确认手势通道是否放行。
+            performTap(2f, metrics.heightPixels / 2f)
+        }
+
+        return CapabilityReport(
+            connected = true,
+            capabilitiesRaw = "0x%X (%d)".format(capabilities, capabilities),
+            canRetrieveWindowContent =
+                capabilities and AccessibilityServiceInfo.CAPABILITY_CAN_RETRIEVE_WINDOW_CONTENT != 0,
+            canPerformGestures = canPerformGestures,
+            canTakeScreenshot = canTakeScreenshot,
+            gestureDispatchSucceeded = gestureDispatch,
+        )
+    }
+
+    data class CapabilityReport(
+        val connected: Boolean,
+        val capabilitiesRaw: String,
+        val canRetrieveWindowContent: Boolean,
+        val canPerformGestures: Boolean,
+        val canTakeScreenshot: Boolean,
+        val gestureDispatchSucceeded: Boolean?,
+    ) {
+        val gesturesUsable: Boolean
+            get() = gestureDispatchSucceeded == true || canPerformGestures
     }
 
     companion object {

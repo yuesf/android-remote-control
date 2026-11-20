@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">远程协助验证</string>
-    <string name="app_subtitle">单 APK 双角色 · 荣耀 70 无人值守验证</string>
+    <string name="app_subtitle">单 APK 双角色 · 局域网配对 + 公网远程</string>
+    <string name="build_info_format">%1$s %2$s · Android %3$s (API %4$d)</string>
     <string name="server_url_label">信令服务器地址</string>
     <string name="access_token_label">访问令牌</string>
     <string name="device_name_label">设备名称</string>
@@ -36,6 +37,16 @@
     <string name="config_required">请先完整填写服务器地址、访问令牌和设备名称</string>
     <string name="agent_config_required">配置不完整，无法启动被控服务</string>
     <string name="accessibility_enabled_status">无障碍服务已启用</string>
+    <string name="check_capabilities">设备能力自检</string>
+    <string name="capability_dialog_title">设备能力自检结果</string>
+    <string name="capability_not_connected">无障碍服务未启用，无法自检。请先开启无障碍服务。</string>
+    <string name="capability_report">无障碍服务：已绑定\n系统能力值：%1$s\n读取窗口内容：%2$s\n手势注入能力位：%3$s\n手势实派结果：%4$s\n截图能力：%5$s\n\n结论：%6$s</string>
+    <string name="capability_yes">可用</string>
+    <string name="capability_no">不可用</string>
+    <string name="capability_unknown">未测试</string>
+    <string name="capability_conclusion_ok">点击、滑动、返回等远程操作可以执行。</string>
+    <string name="capability_conclusion_gesture_blocked">手势注入被系统拦截，远程点击和滑动不可用。需要在系统设置中检查无障碍权限，或该机型限制了手势注入。</string>
+    <string name="capability_conclusion_screenshot_missing">手势可用，但截图能力缺失，无法使用无障碍截图作为录屏降级方案。</string>
     <string name="accessibility_disabled_status">无障碍服务未启用，请先在系统设置中开启</string>
     <string name="agent_start_failed">被控服务启动失败：%1$s</string>
     <string name="settings_unavailable">当前系统无法打开该设置页面</string>

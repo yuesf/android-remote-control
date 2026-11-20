@@ -77,9 +77,20 @@ class MainActivity : AppCompatActivity() {
         preferences = AppPreferences(this)
 
         populateForm()
+        renderBuildInfo()
         bindActions()
         observeSignaling()
         renderRole()
+    }
+
+    private fun renderBuildInfo() {
+        binding.buildInfoText.text = getString(
+            R.string.build_info_format,
+            Build.MANUFACTURER.replaceFirstChar { it.uppercase() },
+            Build.MODEL,
+            Build.VERSION.RELEASE,
+            Build.VERSION.SDK_INT,
+        )
     }
 
     override fun onResume() {
@@ -153,6 +164,57 @@ class MainActivity : AppCompatActivity() {
         binding.batterySettingsButton.setOnClickListener {
             openSettings(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
+        binding.capabilityCheckButton.setOnClickListener {
+            showCapabilityReport()
+        }
+    }
+
+    private fun showCapabilityReport() {
+        val service = RemoteAccessibilityService.instance
+        if (service == null) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.capability_dialog_title)
+                .setMessage(R.string.capability_not_connected)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            return
+        }
+
+        val report = runCatching { service.evaluateCapabilities(testGesture = true) }.getOrNull()
+        if (report == null) {
+            toast(getString(R.string.capability_not_connected))
+            return
+        }
+
+        val yes = getString(R.string.capability_yes)
+        val no = getString(R.string.capability_no)
+        val unknown = getString(R.string.capability_unknown)
+        val dispatchResult = when (report.gestureDispatchSucceeded) {
+            true -> yes
+            false -> no
+            null -> unknown
+        }
+        val conclusion = when {
+            report.gestureDispatchSucceeded == false -> getString(R.string.capability_conclusion_gesture_blocked)
+            report.gesturesUsable -> getString(R.string.capability_conclusion_ok)
+            else -> getString(R.string.capability_conclusion_gesture_blocked)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.capability_dialog_title)
+            .setMessage(
+                getString(
+                    R.string.capability_report,
+                    report.capabilitiesRaw,
+                    if (report.canRetrieveWindowContent) yes else no,
+                    if (report.canPerformGestures) yes else no,
+                    dispatchResult,
+                    if (report.canTakeScreenshot) yes else no,
+                    conclusion,
+                ),
+            )
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     private fun observeSignaling() {

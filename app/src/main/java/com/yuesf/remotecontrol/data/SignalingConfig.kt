@@ -9,11 +9,17 @@ data class SignalingConfig(
     val deviceName: String,
     val role: DeviceRole,
 ) {
+    /**
+     * OkHttp 的 HttpUrl 只接受 http/https；newWebSocket 会自动映射为 ws/wss。
+     * 这里不能把 scheme 改成 "ws"，否则会抛 IllegalArgumentException。
+     */
     val webSocketUrl: HttpUrl
         get() = serverUrl.newBuilder()
-            .scheme(if (serverUrl.isHttps) "wss" else "ws")
             .encodedPath("/ws")
             .query(null)
             .fragment(null)
             .build()
+
+    val displayWebSocketUrl: String
+        get() = webSocketUrl.toString().replaceFirst("http", "ws")
 }

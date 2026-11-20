@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/brand_surface"
@@ -30,6 +31,15 @@
             android:text="@string/app_subtitle"
             android:textColor="#5F6368"
             android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/buildInfoText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="#8A8F98"
+            android:textSize="12sp"
+            tools:text="HONOR FNE-AN00 · Android 14 (API 34)" />
 
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
@@ -237,6 +247,15 @@
                     android:layout_marginTop="4dp"
                     android:textColor="#5F6368"
                     android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/capabilityCheckButton"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/check_capabilities"
+                    android:textAllCaps="false" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/batterySettingsButton"
