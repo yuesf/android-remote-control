@@ -40,6 +40,7 @@ import org.json.JSONObject
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var preferences: AppPreferences
+    private var suppressRoleCallback = false
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -97,7 +98,7 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         renderRole()
         renderAccessibilityStatus()
-        if (currentRole() == DeviceRole.CONTROLLER &&
+        if (currentRoleOrNull() == DeviceRole.CONTROLLER &&
             SignalingRepository.state.value.phase == ConnectionPhase.ONLINE
         ) {
             SignalingRepository.refreshDevices()
@@ -108,16 +109,71 @@ class MainActivity : AppCompatActivity() {
         binding.serverUrlInput.setText(preferences.savedServerUrl())
         binding.tokenInput.setText(preferences.savedAuthToken())
         binding.deviceNameInput.setText(preferences.savedDeviceName())
-        when (preferences.savedRole()) {
-            DeviceRole.AGENT -> binding.agentRoleButton.isChecked = true
-            DeviceRole.CONTROLLER -> binding.controllerRoleButton.isChecked = true
+        when (preferences.savedRoleOrNull()) {
+            DeviceRole.AGENT -> setRoleSelection(DeviceRole.AGENT)
+            DeviceRole.CONTROLLER -> setRoleSelection(DeviceRole.CONTROLLER)
+            null -> Unit
         }
     }
 
+    /**
+     * 程序化勾选角色时不触发切换副作用，避免界面还原被当成用户操作。
+     */
+    private fun setRoleSelection(role: DeviceRole) {
+        suppressRoleCallback = true
+        when (role) {
+            DeviceRole.AGENT -> binding.agentRoleButton.isChecked = true
+            DeviceRole.CONTROLLER -> binding.controllerRoleButton.isChecked = true
+        }
+        suppressRoleCallback = false
+    }
+
+    /**
+     * 角色切换立即生效：同一台手机不能同时以被控端和控制端身份在线。
+     * 切到控制端必须停掉被控服务并重连；切到被控端必须放开控制端连接。
+     */
+    private fun applyRoleChange(role: DeviceRole) {
+        preferences.saveRole(role)
+        val agentWasRunning = RemoteAgentService.isRunning
+
+        if (role == DeviceRole.CONTROLLER) {
+            if (agentWasRunning) {
+                RemoteAgentService.stop(this)
+            }
+            SignalingRepository.disconnect()
+            preferences.loadConfig()?.let { SignalingRepository.connect(it) }
+            if (agentWasRunning) {
+                toast(getString(R.string.role_switched_to_controller))
+            }
+        } else {
+            if (!agentWasRunning) {
+                SignalingRepository.disconnect()
+                val ready = preferences.loadConfig() != null
+                toast(
+                    getString(
+                        if (ready) {
+                            R.string.role_switched_to_agent
+                        } else {
+                            R.string.role_switched_to_agent_need_config
+                        },
+                    ),
+                )
+            }
+        }
+        renderRole()
+    }
+
     private fun bindActions() {
-        binding.roleGroup.setOnCheckedChangeListener { _, _ ->
-            binding.connectionStatusText.text = getString(R.string.status_disconnected)
-            renderRole()
+        binding.roleGroup.setOnCheckedChangeListener { _, checkedId ->
+            if (suppressRoleCallback) {
+                return@setOnCheckedChangeListener
+            }
+            val role = when (checkedId) {
+                R.id.agentRoleButton -> DeviceRole.AGENT
+                R.id.controllerRoleButton -> DeviceRole.CONTROLLER
+                else -> return@setOnCheckedChangeListener
+            }
+            applyRoleChange(role)
         }
 
         binding.saveButton.setOnClickListener {
@@ -249,6 +305,12 @@ class MainActivity : AppCompatActivity() {
         binding.tokenLayout.error = null
         binding.deviceNameLayout.error = null
 
+        val role = currentRoleOrNull()
+        if (role == null) {
+            toast(getString(R.string.role_required))
+            return@run null
+        }
+
         val serverUrl = binding.serverUrlInput.text?.toString()?.trim().orEmpty()
         val parsedUrl = serverUrl.toHttpUrlOrNull()
         if (parsedUrl == null || (parsedUrl.scheme != "http" && parsedUrl.scheme != "https")) {
@@ -268,7 +330,7 @@ class MainActivity : AppCompatActivity() {
             return@run null
         }
 
-        val config = preferences.save(serverUrl, token, deviceName, currentRole())
+        val config = preferences.save(serverUrl, token, deviceName, role)
         if (config == null) {
             toast(getString(R.string.config_required))
         }
@@ -305,9 +367,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderRole() {
-        val agent = currentRole() == DeviceRole.AGENT
+        val role = currentRoleOrNull()
+        val agent = role == DeviceRole.AGENT
+        val controller = role == DeviceRole.CONTROLLER
+        binding.roleHintText.visibility = if (role == null) TextView.VISIBLE else TextView.GONE
         binding.agentSection.visibility = if (agent) LinearLayout.VISIBLE else LinearLayout.GONE
-        binding.controllerSection.visibility = if (agent) LinearLayout.GONE else LinearLayout.VISIBLE
+        binding.controllerSection.visibility = if (controller) LinearLayout.VISIBLE else LinearLayout.GONE
         binding.startAgentButton.visibility =
             if (agent && !RemoteAgentService.isRunning) LinearLayout.VISIBLE else LinearLayout.GONE
         binding.stopAgentButton.visibility =
@@ -345,7 +410,7 @@ class MainActivity : AppCompatActivity() {
         }
         binding.connectionStatusText.text = text
 
-        if (state.phase == ConnectionPhase.ONLINE && currentRole() == DeviceRole.CONTROLLER) {
+        if (state.phase == ConnectionPhase.ONLINE && currentRoleOrNull() == DeviceRole.CONTROLLER) {
             SignalingRepository.refreshDevices()
         }
         renderRole()
@@ -387,8 +452,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun currentRole(): DeviceRole =
-        if (binding.agentRoleButton.isChecked) DeviceRole.AGENT else DeviceRole.CONTROLLER
+    private fun currentRoleOrNull(): DeviceRole? = when {
+        binding.agentRoleButton.isChecked -> DeviceRole.AGENT
+        binding.controllerRoleButton.isChecked -> DeviceRole.CONTROLLER
+        else -> null
+    }
 
     private fun showPairingQr() {
         val config = persistForm() ?: return
@@ -446,7 +514,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.serverUrlInput.setText(server)
         binding.tokenInput.setText(token)
-        binding.controllerRoleButton.isChecked = true
+        setRoleSelection(DeviceRole.CONTROLLER)
 
         val ownName = preferences.savedDeviceName()
         val config = preferences.save(server, token, ownName, DeviceRole.CONTROLLER)

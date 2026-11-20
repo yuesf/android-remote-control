@@ -9,6 +9,11 @@
     <string name="role_label">本机角色</string>
     <string name="role_agent">B 被控端</string>
     <string name="role_controller">A 控制端</string>
+    <string name="role_required">请先选择本机角色（A 控制端或 B 被控端）</string>
+    <string name="role_not_selected_hint">先选择本机角色：这台手机是「A 控制端」还是「B 被控端」。角色随时可以切换，切换后立即生效。</string>
+    <string name="role_switched_to_controller">已切换为 A 控制端，被控服务已停止</string>
+    <string name="role_switched_to_agent">已切换为 B 被控端，请点击「启动被控服务」</string>
+    <string name="role_switched_to_agent_need_config">已切换为 B 被控端，请填写服务器配置后启动被控服务</string>
     <string name="save_and_connect">保存配置并连接</string>
     <string name="start_agent">启动被控服务</string>
     <string name="stop_agent">停止被控服务</string>

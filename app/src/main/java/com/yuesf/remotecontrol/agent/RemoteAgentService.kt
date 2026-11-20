@@ -81,7 +81,7 @@ class RemoteAgentService : Service() {
 
         signalJob?.cancel()
         serviceScope.cancel()
-        if (AppPreferences(this).savedRole() == DeviceRole.AGENT) {
+        if (AppPreferences(this).savedRoleOrNull() != DeviceRole.CONTROLLER) {
             SignalingRepository.disconnect()
         }
         super.onDestroy()

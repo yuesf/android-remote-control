@@ -26,8 +26,15 @@ class AppPreferences(context: Context) {
     fun savedDeviceName(): String =
         preferences.getString(KEY_DEVICE_NAME, null) ?: defaultDeviceName()
 
-    fun savedRole(): DeviceRole =
-        DeviceRole.fromWire(preferences.getString(KEY_ROLE, DeviceRole.AGENT.wireValue).orEmpty())
+    /**
+     * 角色只由界面选择决定，不设默认值。首次安装返回 null，必须用户显式选择。
+     */
+    fun savedRoleOrNull(): DeviceRole? =
+        preferences.getString(KEY_ROLE, null)?.let(DeviceRole::fromWire)
+
+    fun saveRole(role: DeviceRole) {
+        preferences.edit().putString(KEY_ROLE, role.wireValue).apply()
+    }
 
     fun save(serverUrl: String, authToken: String, deviceName: String, role: DeviceRole): SignalingConfig? {
         val parsedUrl = serverUrl.trim().toHttpUrlOrNull() ?: return null
@@ -52,6 +59,7 @@ class AppPreferences(context: Context) {
     }
 
     fun loadConfig(): SignalingConfig? {
+        val role = savedRoleOrNull() ?: return null
         val serverUrl = savedServerUrl().toHttpUrlOrNull() ?: return null
         if (serverUrl.scheme != "http" && serverUrl.scheme != "https") {
             return null
@@ -68,7 +76,7 @@ class AppPreferences(context: Context) {
             authToken = token,
             deviceId = deviceId,
             deviceName = deviceName,
-            role = savedRole(),
+            role = role,
         )
     }
 

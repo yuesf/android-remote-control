@@ -17,7 +17,7 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         val preferences = AppPreferences(context)
-        if (preferences.savedRole() != DeviceRole.AGENT || preferences.loadConfig() == null) {
+        if (preferences.savedRoleOrNull() != DeviceRole.AGENT || preferences.loadConfig() == null) {
             return
         }
 
