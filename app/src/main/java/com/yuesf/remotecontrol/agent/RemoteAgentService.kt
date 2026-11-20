@@ -49,7 +49,13 @@ class RemoteAgentService : Service() {
         createNotificationChannel()
         isRunning = true
         signalJob = serviceScope.launch {
-            SignalingRepository.signals.collect(::handleRemoteSignal)
+            // 单个信号处理失败不能让整条订阅终止：collect 里抛异常会结束这个协程，
+            // 之后再也不会收到任何信号，表现就是「在线但收到请求毫无反应」，
+            // 而 socket 和心跳都正常，从外部看极难定位。
+            SignalingRepository.signals.collect { signal ->
+                runCatching { handleRemoteSignal(signal) }
+                    .onFailure { Log.e(TAG, "failed to handle signal ${signal.payload.optString("kind")}", it) }
+            }
         }
     }
 

@@ -2,6 +2,8 @@ package com.yuesf.remotecontrol
 
 import android.annotation.SuppressLint
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -26,9 +28,23 @@ class RemoteSessionActivity : AppCompatActivity() {
     private lateinit var session: ControllerRtcSession
 
     private var requestSent = false
+    private var offerReceived = false
+    private var targetSeenOnline = false
     private var downX = 0f
     private var downY = 0f
     private var downAt = 0L
+
+    private val timeoutHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * 请求发出后对方可能一直不响应（B 端服务在、但无障碍没开或屏幕采集未授权，
+     * 甚至 B 端进程被系统冻结）。没有这个超时，界面会永远停在“等待中”。
+     */
+    private val requestTimeout = Runnable {
+        if (!offerReceived && !isFinishing) {
+            binding.sessionStatus.setText(R.string.remote_session_no_response)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,6 +80,7 @@ class RemoteSessionActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        timeoutHandler.removeCallbacks(requestTimeout)
         if (::session.isInitialized) {
             if (requestSent) {
                 SignalingRepository.sendSignal(
@@ -112,10 +129,50 @@ class RemoteSessionActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
                     SignalingRepository.state.collect { state ->
-                        if (state.phase == ConnectionPhase.ONLINE) {
-                            requestSessionIfNeeded()
-                        } else if (!requestSent) {
-                            binding.sessionStatus.setText(R.string.remote_session_connecting)
+                        when (state.phase) {
+                            ConnectionPhase.ONLINE -> requestSessionIfNeeded()
+                            // 连接本身不可用，直接把原因摊开，不再停在初始文案。
+                            ConnectionPhase.ERROR -> if (!requestSent) {
+                                binding.sessionStatus.text = getString(
+                                    R.string.remote_session_error,
+                                    state.detail.orEmpty(),
+                                )
+                            }
+
+                            else -> if (!requestSent) {
+                                binding.sessionStatus.setText(R.string.remote_session_waiting_signaling)
+                            }
+                        }
+                    }
+                }
+                launch {
+                    SignalingRepository.errors.collect { error ->
+                        timeoutHandler.removeCallbacks(requestTimeout)
+                        val message = when (error.code) {
+                            "TARGET_OFFLINE", "TARGET_UNAVAILABLE" ->
+                                getString(R.string.remote_session_target_offline)
+
+                            else -> getString(R.string.remote_session_error, error.code)
+                        }
+                        binding.sessionStatus.text = message
+                    }
+                }
+                launch {
+                    SignalingRepository.devices.collect { devices ->
+                        // 只在“确认过对方在线、之后又消失”时才判离线，
+                        // 避免刚进界面时列表为空导致误报。
+                        if (!targetSeenOnline) {
+                            if (devices.any { it.deviceId == targetDeviceId }) {
+                                targetSeenOnline = true
+                            }
+                            return@collect
+                        }
+                        if (offerReceived) {
+                            return@collect
+                        }
+                        if (devices.none { it.deviceId == targetDeviceId }) {
+                            timeoutHandler.removeCallbacks(requestTimeout)
+                            binding.sessionStatus.setText(R.string.remote_session_target_offline)
                         }
                     }
                 }
@@ -124,9 +181,17 @@ class RemoteSessionActivity : AppCompatActivity() {
                         if (signal.fromDeviceId != targetDeviceId) {
                             return@collect
                         }
-                        session.handleSignal(signal.payload)
-                        if (signal.payload.optString("kind") == "webrtc-offer") {
-                            binding.sessionStatus.setText(R.string.remote_session_connected)
+                        // 单条信号解析失败不能终止整条订阅，否则会话界面会永久失联。
+                        runCatching { session.handleSignal(signal.payload) }
+                        when (signal.payload.optString("kind")) {
+                            "webrtc-offer" -> {
+                                offerReceived = true
+                                timeoutHandler.removeCallbacks(requestTimeout)
+                                binding.sessionStatus.setText(R.string.remote_session_connected)
+                            }
+
+                            "session-error", "session-ended" ->
+                                timeoutHandler.removeCallbacks(requestTimeout)
                         }
                     }
                 }
@@ -141,6 +206,9 @@ class RemoteSessionActivity : AppCompatActivity() {
         requestSent = SignalingRepository.sendControlRequest(targetDeviceId)
         if (requestSent) {
             binding.sessionStatus.setText(R.string.remote_session_waiting_offer)
+            timeoutHandler.postDelayed(requestTimeout, REQUEST_TIMEOUT_MS)
+        } else {
+            binding.sessionStatus.setText(R.string.remote_session_waiting_signaling)
         }
     }
 
@@ -238,5 +306,8 @@ class RemoteSessionActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_TARGET_DEVICE_ID = "target_device_id"
         const val EXTRA_TARGET_DEVICE_NAME = "target_device_name"
+
+        /** 等待 B 返回 offer 的上限。超过这个时间基本可以判定对方没有在处理请求。 */
+        private const val REQUEST_TIMEOUT_MS = 20_000L
     }
 }

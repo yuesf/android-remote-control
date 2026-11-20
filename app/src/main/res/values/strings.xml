@@ -66,6 +66,9 @@
     <string name="remote_session_title">控制 %1$s</string>
     <string name="remote_session_connecting">正在建立远程连接…</string>
     <string name="remote_session_waiting_offer">已请求连接，等待 B 返回画面…</string>
+    <string name="remote_session_waiting_signaling">信令未就绪，正在等待连接…</string>
+    <string name="remote_session_target_offline">对方设备已离线，请确认 B 端已启动被控服务</string>
+    <string name="remote_session_no_response">对方无响应：请确认 B 端无障碍已开启、屏幕采集已授权</string>
     <string name="remote_session_connected">已连接</string>
     <string name="remote_session_closed">连接已断开</string>
     <string name="remote_session_error">连接失败：%1$s</string>

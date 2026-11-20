@@ -36,3 +36,16 @@ data class SignalingState(
     val phase: ConnectionPhase,
     val detail: String? = null,
 )
+
+/**
+ * 服务端返回的业务级错误，例如目标设备离线。
+ *
+ * 这类错误**不代表信令连接本身有问题**，必须与 [SignalingState] 分开：
+ * 早先把它们直接写成 phase = ERROR，结果一次点错目标就把全局状态永久锁死
+ * （只有 ready 能把 phase 拉回 ONLINE，而 ready 只在注册时发一次），
+ * 后续所有会话请求都因为 phase != ONLINE 而发不出去。
+ */
+data class ServerError(
+    val code: String,
+    val message: String,
+)

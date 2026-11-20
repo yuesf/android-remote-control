@@ -21,9 +21,15 @@ export class SignalingHub {
 
     const sink: DeviceSink = {
       send: (data) => {
-        if (socket.readyState === socket.OPEN) {
-          socket.send(data);
+        if (socket.readyState !== socket.OPEN) {
+          return false;
         }
+        socket.send(data, (error) => {
+          if (error) {
+            this.options.logger.warn("WebSocket send failed", { error: error.message });
+          }
+        });
+        return true;
       },
       close: (code, reason) => socket.close(code, reason),
     };
@@ -116,13 +122,16 @@ export class SignalingHub {
         }
 
         try {
-          target.sink.send(
+          const delivered = target.sink.send(
             JSON.stringify({
               type: "signal",
               fromDeviceId: registeredDeviceId,
               payload: message.payload,
             }),
           );
+          if (!delivered) {
+            sendError("TARGET_UNAVAILABLE", "Target device is no longer reachable");
+          }
         } catch (error) {
           this.options.logger.warn("Signal forwarding failed", {
             targetDeviceId: message.targetDeviceId,

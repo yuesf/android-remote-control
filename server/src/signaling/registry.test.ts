@@ -6,8 +6,9 @@ class FakeSink implements DeviceSink {
   readonly sent: string[] = [];
   closedWith: { code: number; reason: string } | null = null;
 
-  send(data: string): void {
+  send(data: string): boolean {
     this.sent.push(data);
+    return true;
   }
 
   close(code: number, reason: string): void {

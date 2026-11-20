@@ -1,7 +1,13 @@
 import type { DeviceRole, PublicDevice } from "./protocol.js";
 
 export interface DeviceSink {
-  send(data: string): void;
+  /**
+   * 投递一条消息。
+   * 返回 false 表示这条连接当前不可写（已关闭或正在关闭），
+   * 调用方据此向发送方回 TARGET_UNAVAILABLE；
+   * 早先的实现在这里静默丢弃，导致发送方永远等不到任何结果。
+   */
+  send(data: string): boolean;
   close(code: number, reason: string): void;
 }
 
