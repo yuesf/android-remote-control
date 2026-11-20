@@ -28,13 +28,13 @@ import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.agent.RemoteAgentService
 import com.yuesf.remotecontrol.data.AppPreferences
 import com.yuesf.remotecontrol.data.DeviceRole
+import com.yuesf.remotecontrol.data.normalizeServerUrl
 import com.yuesf.remotecontrol.databinding.ActivityMainBinding
 import com.yuesf.remotecontrol.signaling.ConnectionPhase
 import com.yuesf.remotecontrol.signaling.DeviceInfo
 import com.yuesf.remotecontrol.signaling.SignalingRepository
 import com.yuesf.remotecontrol.signaling.SignalingState
 import kotlinx.coroutines.launch
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
@@ -312,11 +312,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         val serverUrl = binding.serverUrlInput.text?.toString()?.trim().orEmpty()
-        val parsedUrl = serverUrl.toHttpUrlOrNull()
-        if (parsedUrl == null || (parsedUrl.scheme != "http" && parsedUrl.scheme != "https")) {
+        val parsedUrl = normalizeServerUrl(serverUrl)
+        if (parsedUrl == null) {
             binding.serverUrlLayout.error = getString(R.string.invalid_server)
             return@run null
         }
+        // 回填规范化后的地址，让用户看到实际生效的形式（补全 http://、去掉尾部斜杠）。
+        binding.serverUrlInput.setText(parsedUrl.toString().trimEnd('/'))
 
         val token = binding.tokenInput.text?.toString()?.trim().orEmpty()
         if (token.length < 16) {
@@ -503,11 +505,8 @@ class MainActivity : AppCompatActivity() {
         val server = payload.optString("server")
         val token = payload.optString("token")
         val targetName = payload.optString("deviceName", "B 设备")
-        val parsedUrl = server.toHttpUrlOrNull()
-        if (parsedUrl == null ||
-            (parsedUrl.scheme != "http" && parsedUrl.scheme != "https") ||
-            token.length < 16
-        ) {
+        val parsedUrl = normalizeServerUrl(server)
+        if (parsedUrl == null || token.length < 16) {
             toast(getString(R.string.pairing_invalid))
             return
         }

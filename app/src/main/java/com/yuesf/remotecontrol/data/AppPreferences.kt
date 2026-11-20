@@ -3,7 +3,6 @@ package com.yuesf.remotecontrol.data
 import android.content.Context
 import android.os.Build
 import com.yuesf.remotecontrol.BuildConfig
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.UUID
 
 class AppPreferences(context: Context) {
@@ -11,6 +10,32 @@ class AppPreferences(context: Context) {
         PREFERENCES_NAME,
         Context.MODE_PRIVATE,
     )
+
+    init {
+        applyPresetIfOutdated()
+    }
+
+    /**
+     * 预置配置只在全新安装时生效，装过旧版本的机器会一直沿用 SharedPreferences 里的
+     * 旧地址与旧令牌，表现为“地址填对了却连不上”或 401。
+     *
+     * 这里按 [BuildConfig.PRESET_VERSION] 做一次性同步：预置内容变更后升级首启，
+     * 把地址与令牌改成新的预置值；设备 ID、设备名、角色保持不动。
+     * 用户手动保存配置后也会写入同一个版本号，之后不再被覆盖。
+     */
+    private fun applyPresetIfOutdated() {
+        if (BuildConfig.DEFAULT_SERVER_URL.isBlank() || BuildConfig.DEFAULT_AUTH_TOKEN.isBlank()) {
+            return
+        }
+        if (preferences.getInt(KEY_PRESET_VERSION, 0) >= BuildConfig.PRESET_VERSION) {
+            return
+        }
+        preferences.edit()
+            .putString(KEY_SERVER_URL, BuildConfig.DEFAULT_SERVER_URL.trimEnd('/'))
+            .putString(KEY_AUTH_TOKEN, BuildConfig.DEFAULT_AUTH_TOKEN)
+            .putInt(KEY_PRESET_VERSION, BuildConfig.PRESET_VERSION)
+            .apply()
+    }
 
     val deviceId: String
         get() = synchronized(this) {
@@ -40,10 +65,7 @@ class AppPreferences(context: Context) {
     }
 
     fun save(serverUrl: String, authToken: String, deviceName: String, role: DeviceRole): SignalingConfig? {
-        val parsedUrl = serverUrl.trim().toHttpUrlOrNull() ?: return null
-        if (parsedUrl.scheme != "http" && parsedUrl.scheme != "https") {
-            return null
-        }
+        val parsedUrl = normalizeServerUrl(serverUrl) ?: return null
 
         val normalizedName = deviceName.trim()
         val normalizedToken = authToken.trim()
@@ -56,6 +78,7 @@ class AppPreferences(context: Context) {
             .putString(KEY_AUTH_TOKEN, normalizedToken)
             .putString(KEY_DEVICE_NAME, normalizedName)
             .putString(KEY_ROLE, role.wireValue)
+            .putInt(KEY_PRESET_VERSION, BuildConfig.PRESET_VERSION)
             .apply()
 
         return loadConfig()
@@ -63,10 +86,7 @@ class AppPreferences(context: Context) {
 
     fun loadConfig(): SignalingConfig? {
         val role = savedRoleOrNull() ?: return null
-        val serverUrl = savedServerUrl().toHttpUrlOrNull() ?: return null
-        if (serverUrl.scheme != "http" && serverUrl.scheme != "https") {
-            return null
-        }
+        val serverUrl = normalizeServerUrl(savedServerUrl()) ?: return null
 
         val token = savedAuthToken()
         val deviceName = savedDeviceName().trim()
@@ -95,5 +115,6 @@ class AppPreferences(context: Context) {
         private const val KEY_AUTH_TOKEN = "auth_token"
         private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_ROLE = "role"
+        private const val KEY_PRESET_VERSION = "preset_version"
     }
 }

@@ -11,11 +11,17 @@ android {
         applicationId = "com.yuesf.remotecontrol"
         minSdk = 29
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
 
         // 预置信令服务器地址与令牌，省去在两台手机上手工输入 48 位串。
         // 设备角色仍然不预置，由界面选择。
+        //
+        // PRESET_VERSION 是这份预置配置的版本号。每次改动上面两个值都必须递增，
+        // 否则已经装过旧版本的手机仍会沿用 SharedPreferences 里的旧地址与旧令牌
+        // （表现为“保存了却连不上/401”，因为预置值只在全新安装时生效）。
+        // 递增后，升级首启会按新版本号同步一次，之后用户手改的配置不再被覆盖。
+        buildConfigField("int", "PRESET_VERSION", "2")
         buildConfigField("String", "DEFAULT_SERVER_URL", "\"http://8.152.3.131:8787\"")
         buildConfigField(
             "String",
