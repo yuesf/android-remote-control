@@ -8,6 +8,7 @@ import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
+import com.yuesf.remotecontrol.signaling.SignalingRepository
 import org.json.JSONObject
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
@@ -65,6 +66,7 @@ class AgentRtcSession(
     fun start() {
         try {
             WebRtcEngine.initialize(appContext)
+            WebRtcEngine.setIceServers(SignalingRepository.iceServers)
             val dimensions = captureSize()
             captureWidth = dimensions.first
             captureHeight = dimensions.second

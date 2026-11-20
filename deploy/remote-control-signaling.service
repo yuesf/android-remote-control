@@ -1,0 +1,22 @@
+[Unit]
+Description=Remote Control Signaling Server
+Documentation=https://github.com/yuesf/android-remote-control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=remotecontrol
+Group=remotecontrol
+WorkingDirectory=/opt/remote-control/server
+EnvironmentFile=/opt/remote-control/server/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

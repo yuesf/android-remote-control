@@ -1,5 +1,6 @@
 import type { RawData, WebSocket } from "ws";
 import { ZodError } from "zod";
+import type { IceServerSetting } from "../config.js";
 import type { Logger } from "../shared/logger.js";
 import { parseClientMessage, type ClientMessage } from "./protocol.js";
 import { DeviceRegistry, type DeviceSink } from "./registry.js";
@@ -8,6 +9,7 @@ interface HubOptions {
   registry: DeviceRegistry;
   logger: Logger;
   maximumMessageBytes: number;
+  iceServers?: IceServerSetting[];
 }
 
 export class SignalingHub {
@@ -76,7 +78,12 @@ export class SignalingHub {
           deviceName: device.deviceName,
         });
 
-        send({ type: "ready", deviceId: device.deviceId, connectedAt: device.connectedAt });
+        send({
+          type: "ready",
+          deviceId: device.deviceId,
+          connectedAt: device.connectedAt,
+          iceServers: this.options.iceServers ?? [],
+        });
         this.broadcastPresence();
         return;
       }

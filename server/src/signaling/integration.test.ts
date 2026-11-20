@@ -109,6 +109,7 @@ test("two authenticated devices register and relay a control request", async () 
     authToken: token,
     maxWebSocketPayloadBytes: 262_144,
     logLevel: "error",
+    iceServers: [{ urls: ["stun:203.0.113.10:3478"] }],
   };
   const registry = new DeviceRegistry();
   const server = createServer();
@@ -128,6 +129,9 @@ test("two authenticated devices register and relay a control request", async () 
     role: "controller",
     deviceName: "Controller A",
   });
+
+  const ready = await agent.nextMessage((message) => message.type === "ready");
+  assert.deepEqual(ready.iceServers, [{ urls: ["stun:203.0.113.10:3478"] }]);
 
   const presence = await agent.nextMessage(
     (message) => message.type === "devices" && message.devices.length === 2,

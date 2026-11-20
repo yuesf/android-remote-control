@@ -2,6 +2,7 @@ package com.yuesf.remotecontrol.webrtc
 
 import android.os.Handler
 import android.os.Looper
+import com.yuesf.remotecontrol.signaling.SignalingRepository
 import org.json.JSONObject
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
@@ -42,6 +43,7 @@ class ControllerRtcSession(
 
     fun start() {
         WebRtcEngine.initialize(renderer.context)
+        WebRtcEngine.setIceServers(SignalingRepository.iceServers)
         peerConnection = WebRtcEngine.createPeerConnection(peerObserver)
     }
 

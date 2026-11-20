@@ -27,6 +27,7 @@ export function attachSignalingServer(
     registry,
     logger,
     maximumMessageBytes: config.maxWebSocketPayloadBytes,
+    iceServers: config.iceServers,
   });
 
   webSocketServer.on("connection", (socket: HeartbeatSocket) => {

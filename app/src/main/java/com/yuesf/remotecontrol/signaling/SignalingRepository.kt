@@ -17,6 +17,13 @@ object SignalingRepository {
     private val _signals = MutableSharedFlow<RemoteSignal>(extraBufferCapacity = 32)
     val signals = _signals.asSharedFlow()
 
+    /**
+     * 服务端下发的 ICE 配置，建连瞬间才用得到，不需要 Flow。
+     */
+    @Volatile
+    var iceServers: List<IceServerSpec> = emptyList()
+        private set
+
     private val client = SignalingClient(
         object : SignalingClient.Listener {
             override fun onStateChanged(phase: ConnectionPhase, detail: String?) {
@@ -33,6 +40,10 @@ object SignalingRepository {
 
             override fun onServerError(code: String, message: String) {
                 _state.value = SignalingState(ConnectionPhase.ERROR, "$code: $message")
+            }
+
+            override fun onIceServersChanged(servers: List<IceServerSpec>) {
+                iceServers = servers
             }
         },
     )

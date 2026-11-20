@@ -19,6 +19,7 @@ class SignalingClient(private val listener: Listener) {
         fun onDevicesChanged(devices: List<DeviceInfo>)
         fun onSignalReceived(signal: RemoteSignal)
         fun onServerError(code: String, message: String)
+        fun onIceServersChanged(servers: List<IceServerSpec>)
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -173,6 +174,35 @@ class SignalingClient(private val listener: Listener) {
         mainHandler.post { listener.onSignalReceived(RemoteSignal(from, payload)) }
     }
 
+    private fun dispatchIceServers(array: JSONArray?) {
+        val specs = mutableListOf<IceServerSpec>()
+        if (array != null) {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val urlArray = item.optJSONArray("urls") ?: continue
+                val urls = buildList {
+                    for (urlIndex in 0 until urlArray.length()) {
+                        val url = urlArray.optString(urlIndex).trim()
+                        if (url.isNotEmpty()) {
+                            add(url)
+                        }
+                    }
+                }
+                if (urls.isEmpty()) {
+                    continue
+                }
+                specs.add(
+                    IceServerSpec(
+                        urls = urls,
+                        username = item.optString("username").ifBlank { null },
+                        credential = item.optString("credential").ifBlank { null },
+                    ),
+                )
+            }
+        }
+        mainHandler.post { listener.onIceServersChanged(specs) }
+    }
+
     private fun parseDevices(array: JSONArray): List<DeviceInfo> = buildList {
         for (index in 0 until array.length()) {
             val item = array.optJSONObject(index) ?: continue
@@ -219,6 +249,7 @@ class SignalingClient(private val listener: Listener) {
                 "ready" -> {
                     online = true
                     reconnectAttempt = 0
+                    dispatchIceServers(message.optJSONArray("iceServers"))
                     notifyState(ConnectionPhase.ONLINE, message.optString("deviceId"))
                 }
 

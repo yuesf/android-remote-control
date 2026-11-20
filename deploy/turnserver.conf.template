@@ -1,0 +1,22 @@
+# coturn 配置模板，由 deploy.sh 填入 __PUBLIC_IP__ / __TURN_USER__ / __TURN_PASS__
+listening-port=3478
+listening-ip=0.0.0.0
+external-ip=__PUBLIC_IP__
+
+# 中继端口范围，需在云安全组和系统防火墙同时放行
+min-port=49160
+max-port=49200
+
+fingerprint
+lt-cred-mech
+realm=remote-control
+user=__TURN_USER__:__TURN_PASS__
+
+# 不启用 TLS/DTLS：当前没有可用域名，手机端也不信任自签证书
+no-tls
+no-dtls
+no-cli
+no-multicast-peers
+
+simple-log
+log-file=/var/log/turnserver/turnserver.log

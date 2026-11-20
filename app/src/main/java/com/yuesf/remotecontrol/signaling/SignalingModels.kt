@@ -14,6 +14,16 @@ data class RemoteSignal(
     val payload: JSONObject,
 )
 
+/**
+ * 服务端通过 ready 消息下发的 ICE 配置。
+ * 没有它，跨公网只能等 ICE 直连失败，严格 NAT 下永远不会连通。
+ */
+data class IceServerSpec(
+    val urls: List<String>,
+    val username: String?,
+    val credential: String?,
+)
+
 enum class ConnectionPhase {
     DISCONNECTED,
     CONNECTING,
