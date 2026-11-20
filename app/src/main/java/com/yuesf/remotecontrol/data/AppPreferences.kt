@@ -2,6 +2,7 @@ package com.yuesf.remotecontrol.data
 
 import android.content.Context
 import android.os.Build
+import com.yuesf.remotecontrol.BuildConfig
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.UUID
 
@@ -19,9 +20,11 @@ class AppPreferences(context: Context) {
                 }
         }
 
-    fun savedServerUrl(): String = preferences.getString(KEY_SERVER_URL, "").orEmpty()
+    fun savedServerUrl(): String =
+        preferences.getString(KEY_SERVER_URL, null) ?: BuildConfig.DEFAULT_SERVER_URL
 
-    fun savedAuthToken(): String = preferences.getString(KEY_AUTH_TOKEN, "").orEmpty()
+    fun savedAuthToken(): String =
+        preferences.getString(KEY_AUTH_TOKEN, null) ?: BuildConfig.DEFAULT_AUTH_TOKEN
 
     fun savedDeviceName(): String =
         preferences.getString(KEY_DEVICE_NAME, null) ?: defaultDeviceName()

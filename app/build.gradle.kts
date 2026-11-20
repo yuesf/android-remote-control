@@ -11,8 +11,17 @@ android {
         applicationId = "com.yuesf.remotecontrol"
         minSdk = 29
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
+
+        // 预置信令服务器地址与令牌，省去在两台手机上手工输入 48 位串。
+        // 设备角色仍然不预置，由界面选择。
+        buildConfigField("String", "DEFAULT_SERVER_URL", "\"http://8.152.3.131:8787\"")
+        buildConfigField(
+            "String",
+            "DEFAULT_AUTH_TOKEN",
+            "\"cf2b74ded957c9a0ff5cf7534b9bc5920b983f090aa8e828\"",
+        )
     }
 
     buildTypes {
@@ -36,6 +45,7 @@ android {
 
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 
