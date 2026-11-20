@@ -19,6 +19,7 @@ import com.yuesf.remotecontrol.R
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.data.AppPreferences
 import com.yuesf.remotecontrol.data.DeviceRole
+import com.yuesf.remotecontrol.data.SpaceGuard
 import com.yuesf.remotecontrol.signaling.RemoteSignal
 import com.yuesf.remotecontrol.signaling.SignalingRepository
 import com.yuesf.remotecontrol.webrtc.AgentRtcSession
@@ -39,6 +40,12 @@ class RemoteAgentService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // 双开空间里的实例会持有独立 deviceId，与主空间实例抢同一个被控身份。
+        if (!SpaceGuard.isPrimarySpace(this)) {
+            Log.w(TAG, "refuse to run in secondary user space")
+            stopSelf()
+            return
+        }
         createNotificationChannel()
         isRunning = true
         signalJob = serviceScope.launch {
@@ -47,6 +54,11 @@ class RemoteAgentService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!SpaceGuard.isPrimarySpace(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         if (intent?.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY

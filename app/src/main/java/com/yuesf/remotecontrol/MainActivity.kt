@@ -28,6 +28,7 @@ import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.agent.RemoteAgentService
 import com.yuesf.remotecontrol.data.AppPreferences
 import com.yuesf.remotecontrol.data.DeviceRole
+import com.yuesf.remotecontrol.data.SpaceGuard
 import com.yuesf.remotecontrol.data.normalizeServerUrl
 import com.yuesf.remotecontrol.databinding.ActivityMainBinding
 import com.yuesf.remotecontrol.signaling.ConnectionPhase
@@ -41,6 +42,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var preferences: AppPreferences
     private var suppressRoleCallback = false
+
+    /**
+     * 运行在双开空间/应用分身时置位：此时不初始化界面绑定，
+     * 其它生命周期回调必须提前返回，否则 lateinit 会抛异常。
+     */
+    private var spaceBlocked = false
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -73,6 +80,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        if (!SpaceGuard.isPrimarySpace(this)) {
+            spaceBlocked = true
+            showSpaceBlocked()
+            return
+        }
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         preferences = AppPreferences(this)
@@ -82,6 +96,19 @@ class MainActivity : AppCompatActivity() {
         bindActions()
         observeSignaling()
         renderRole()
+    }
+
+    /**
+     * 双开空间/应用分身里运行没有意义：设备身份会重复，控制端会看到两个同名设备，
+     * 被控端两个实例还会抢屏幕采集。这里只提示并退出，不提供任何可用入口。
+     */
+    private fun showSpaceBlocked() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.space_blocked_title)
+            .setMessage(R.string.space_blocked_message)
+            .setCancelable(false)
+            .setPositiveButton(R.string.close) { _, _ -> finish() }
+            .show()
     }
 
     private fun renderBuildInfo() {
@@ -96,6 +123,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (spaceBlocked) {
+            return
+        }
         renderRole()
         renderAccessibilityStatus()
         if (currentRoleOrNull() == DeviceRole.CONTROLLER &&

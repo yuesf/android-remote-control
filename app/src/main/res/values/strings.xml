@@ -82,4 +82,6 @@
     <string name="pairing_invalid">二维码内容无效</string>
     <string name="pairing_config_required">请先保存完整的服务器配置，再生成配对二维码</string>
     <string name="close">关闭</string>
+    <string name="space_blocked_title">请在机主空间使用</string>
+    <string name="space_blocked_message">当前运行在双开空间或应用分身里。分身会生成独立的设备标识，相当于同一台手机在信令里变成两台设备：控制端会看到两个同名条目，被控端还会和主空间争抢屏幕采集与无障碍手势。\n\n请在机主空间打开本应用，并在双开空间中卸载它。</string>
 </resources>

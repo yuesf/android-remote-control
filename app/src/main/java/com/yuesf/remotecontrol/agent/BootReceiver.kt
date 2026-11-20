@@ -7,12 +7,19 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.yuesf.remotecontrol.data.AppPreferences
 import com.yuesf.remotecontrol.data.DeviceRole
+import com.yuesf.remotecontrol.data.SpaceGuard
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED &&
             intent?.action != Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
+            return
+        }
+
+        // 双开空间里不应出现第二个被控实例，否则两个身份会互相抢采集。
+        if (!SpaceGuard.isPrimarySpace(context)) {
+            Log.w(TAG, "skip agent restart in secondary user space")
             return
         }
 
