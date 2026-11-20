@@ -1,0 +1,30 @@
+# Android and Gradle
+.gradle/
+build/
+local.properties
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# IDE
+.idea/
+*.iml
+.vscode/
+out/
+
+# Local secrets and signing files
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
