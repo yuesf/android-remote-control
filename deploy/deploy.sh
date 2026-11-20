@@ -201,6 +201,27 @@ else
   fi
 fi
 
+# ---------- nginx 反代（可选） ----------
+# 有些网络环境只放行 80/443，无法直连 8787；此时把信令挂到 80 端口的子路径上。
+if [[ "${ENABLE_NGINX_PROXY:-0}" == "1" ]]; then
+  log "配置 nginx 反向代理"
+  if ! command -v nginx >/dev/null 2>&1; then
+    log "    未检测到 nginx，跳过"
+  else
+    RC_NGINX_CONF="/etc/nginx/conf.d/remote-control.conf"
+    sed "s/__PUBLIC_IP__/$PUBLIC_IP/g" \
+      "$SCRIPT_DIR/nginx-remote-control.conf" > "$RC_NGINX_CONF"
+    if nginx -t >/dev/null 2>&1; then
+      systemctl reload nginx 2>/dev/null || nginx -s reload
+      log "    已生效: http://$PUBLIC_IP/rc"
+    else
+      rm -f "$RC_NGINX_CONF"
+      log "    nginx 配置校验失败，已回滚，未影响现有站点"
+      nginx -t || true
+    fi
+  fi
+fi
+
 # ---------- 自检 ----------
 log "自检"
 sleep 2
@@ -211,6 +232,17 @@ if curl -fsS "http://127.0.0.1:$SIGNAL_PORT/health" >/dev/null 2>&1; then
 else
   log "    信令服务未通过健康检查"
 fi
+
+PROXY_OK="未启用"
+if [[ "${ENABLE_NGINX_PROXY:-0}" == "1" ]] && command -v nginx >/dev/null 2>&1; then
+  PROXY_OK="no"
+  if curl -fsS -H "Host: $PUBLIC_IP" "http://127.0.0.1/rc/health" >/dev/null 2>&1; then
+    PROXY_OK="yes"
+    log "    nginx 反代健康检查通过"
+  else
+    log "    nginx 反代健康检查未通过"
+  fi
+fi
 TURN_OK="no"
 if systemctl is-active --quiet "$TURN_UNIT.service"; then TURN_OK="yes"; fi
 log "    coturn ($TURN_UNIT) 状态: $(systemctl is-active "$TURN_UNIT.service" 2>/dev/null || echo unknown)"
@@ -218,9 +250,10 @@ log "    coturn ($TURN_UNIT) 状态: $(systemctl is-active "$TURN_UNIT.service" 
 cat <<EOF
 
 ================ 部署完成 ================
-信令健康:   $SIGNAL_OK      TURN 状态: $TURN_OK
-手机端服务器地址: http://$PUBLIC_IP:$SIGNAL_PORT
-访问令牌:         $AUTH_TOKEN
+信令健康:   $SIGNAL_OK      TURN 状态: $TURN_OK      nginx 反代: $PROXY_OK
+直连地址:   http://$PUBLIC_IP:$SIGNAL_PORT
+反代地址:   http://$PUBLIC_IP/rc   （需 ENABLE_NGINX_PROXY=1）
+访问令牌:   $AUTH_TOKEN
 
 TURN: turn:$PUBLIC_IP:$TURN_PORT
 TURN 用户名: $TURN_USER
