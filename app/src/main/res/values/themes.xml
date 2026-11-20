@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RemoteControl" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand_primary</item>
+        <item name="colorPrimaryContainer">#D7E8FA</item>
+        <item name="colorOnPrimaryContainer">@color/brand_primary_dark</item>
+        <item name="colorSecondary">#0F6E56</item>
+        <item name="android:colorBackground">@color/brand_surface</item>
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="android:navigationBarColor">@color/brand_surface</item>
+        <item name="android:statusBarColor">@color/brand_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>
