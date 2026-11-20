@@ -10,19 +10,40 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.yuesf.remotecontrol.MainActivity
 import com.yuesf.remotecontrol.R
+import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.data.AppPreferences
 import com.yuesf.remotecontrol.data.DeviceRole
+import com.yuesf.remotecontrol.signaling.RemoteSignal
 import com.yuesf.remotecontrol.signaling.SignalingRepository
+import com.yuesf.remotecontrol.webrtc.AgentRtcSession
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 class RemoteAgentService : Service() {
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var signalJob: Job? = null
+    private var agentSession: AgentRtcSession? = null
+    private var sessionTargetId: String? = null
+    private var pendingProjectionData: Intent? = null
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        isRunning = true
+        signalJob = serviceScope.launch {
+            SignalingRepository.signals.collect(::handleRemoteSignal)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -31,7 +52,12 @@ class RemoteAgentService : Service() {
             return START_NOT_STICKY
         }
 
-        startInForeground()
+        extractProjectionData(intent)?.let { projectionData ->
+            pendingProjectionData = projectionData
+            isCaptureAuthorized = true
+        }
+
+        startInForeground(pendingProjectionData != null)
         isRunning = true
 
         val config = AppPreferences(this).loadConfig()
@@ -45,7 +71,15 @@ class RemoteAgentService : Service() {
     }
 
     override fun onDestroy() {
+        agentSession?.close("service-stopped")
+        agentSession = null
+        sessionTargetId = null
+        pendingProjectionData = null
+        isCaptureAuthorized = false
         isRunning = false
+
+        signalJob?.cancel()
+        serviceScope.cancel()
         if (AppPreferences(this).savedRole() == DeviceRole.AGENT) {
             SignalingRepository.disconnect()
         }
@@ -54,17 +88,135 @@ class RemoteAgentService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun startInForeground() {
+    private fun handleRemoteSignal(signal: RemoteSignal) {
+        val payload = signal.payload
+        when (payload.optString("kind")) {
+            "control-request" -> startAgentSession(signal.fromDeviceId)
+            "webrtc-answer" -> {
+                if (signal.fromDeviceId == sessionTargetId) {
+                    agentSession?.setRemoteAnswer(payload.optString("sdp"))
+                }
+            }
+
+            "webrtc-ice" -> {
+                if (signal.fromDeviceId == sessionTargetId) {
+                    agentSession?.addRemoteIceCandidate(
+                        sdpMid = payload.optString("sdpMid").ifBlank { null },
+                        sdpMLineIndex = payload.optInt("sdpMLineIndex"),
+                        candidate = payload.optString("candidate"),
+                    )
+                }
+            }
+
+            "session-end" -> {
+                if (signal.fromDeviceId == sessionTargetId) {
+                    agentSession?.close("remote-end")
+                    agentSession = null
+                    sessionTargetId = null
+                    isCaptureAuthorized = false
+                }
+            }
+        }
+    }
+
+    private fun startAgentSession(controllerDeviceId: String) {
+        val existing = agentSession
+        if (existing != null) {
+            if (controllerDeviceId == sessionTargetId) {
+                existing.resendOffer()
+            } else {
+                sendSessionError(controllerDeviceId, "DEVICE_BUSY")
+            }
+            return
+        }
+
+        if (!RemoteAccessibilityService.isConnected()) {
+            sendSessionError(controllerDeviceId, "ACCESSIBILITY_NOT_ENABLED")
+            return
+        }
+
+        val projectionData = pendingProjectionData
+        if (projectionData == null) {
+            sendSessionError(controllerDeviceId, "CAPTURE_AUTH_REQUIRED")
+            return
+        }
+
+        startInForeground(withProjection = true)
+        pendingProjectionData = null
+        sessionTargetId = controllerDeviceId
+        lateinit var session: AgentRtcSession
+
+        session = AgentRtcSession(
+            context = this,
+            projectionData = projectionData,
+            onLocalSignal = { payload ->
+                SignalingRepository.sendSignal(controllerDeviceId, payload)
+            },
+            onStatus = { status -> Log.d(TAG, "RTC status: $status") },
+            onSessionClosed = { reason ->
+                if (reason != "remote-end") {
+                    SignalingRepository.sendSignal(
+                        controllerDeviceId,
+                        JSONObject()
+                            .put("kind", "session-ended")
+                            .put("reason", reason),
+                    )
+                }
+                if (agentSession === session) {
+                    agentSession = null
+                    sessionTargetId = null
+                    isCaptureAuthorized = false
+                }
+            },
+        )
+        agentSession = session
+
+        runCatching { session.start() }
+            .onFailure { error ->
+                Log.e(TAG, "Unable to start screen capture", error)
+                session.close("capture-start-failed")
+                sendSessionError(controllerDeviceId, "CAPTURE_START_FAILED")
+            }
+    }
+
+    private fun sendSessionError(controllerDeviceId: String, code: String) {
+        SignalingRepository.sendSignal(
+            controllerDeviceId,
+            JSONObject()
+                .put("kind", "session-error")
+                .put("code", code),
+        )
+    }
+
+    private fun startInForeground(withProjection: Boolean) {
         val notification = buildNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            if (withProjection) {
+                types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            }
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, types)
+        } else if (withProjection) {
             ServiceCompat.startForeground(
                 this,
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun extractProjectionData(intent: Intent?): Intent? {
+        if (intent == null) {
+            return null
+        }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(EXTRA_PROJECTION_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra(EXTRA_PROJECTION_DATA)
         }
     }
 
@@ -108,8 +260,10 @@ class RemoteAgentService : Service() {
     }
 
     companion object {
+        private const val TAG = "RemoteAgentService"
         private const val CHANNEL_ID = "remote_agent"
         private const val NOTIFICATION_ID = 4201
+        private const val EXTRA_PROJECTION_DATA = "projection_data"
         const val ACTION_START = "com.yuesf.remotecontrol.agent.START"
         const val ACTION_STOP = "com.yuesf.remotecontrol.agent.STOP"
 
@@ -117,8 +271,19 @@ class RemoteAgentService : Service() {
         var isRunning: Boolean = false
             private set
 
+        @Volatile
+        var isCaptureAuthorized: Boolean = false
+            private set
+
         fun start(context: Context) {
             val intent = Intent(context, RemoteAgentService::class.java).setAction(ACTION_START)
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun startWithProjection(context: Context, projectionData: Intent) {
+            val intent = Intent(context, RemoteAgentService::class.java)
+                .setAction(ACTION_START)
+                .putExtra(EXTRA_PROJECTION_DATA, projectionData)
             ContextCompat.startForegroundService(context, intent)
         }
 

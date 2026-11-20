@@ -11,4 +11,11 @@
         <item name="android:statusBarColor">@color/brand_surface</item>
         <item name="android:windowLightStatusBar">true</item>
     </style>
+
+    <style name="Theme.RemoteControl.Session" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:colorBackground">#111111</item>
+        <item name="colorSurface">#1F1F1F</item>
+        <item name="android:statusBarColor">#111111</item>
+        <item name="android:navigationBarColor">#111111</item>
+    </style>
 </resources>

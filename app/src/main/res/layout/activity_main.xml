@@ -196,6 +196,32 @@
                     android:visibility="gone" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/grantCaptureButton"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/grant_capture"
+                    android:textAllCaps="false" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/showPairingQrButton"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/show_pairing_qr"
+                    android:textAllCaps="false" />
+
+                <TextView
+                    android:id="@+id/captureStatusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="#5F6368"
+                    android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/accessibilitySettingsButton"
                     style="@style/Widget.Material3.Button.TextButton"
                     android:layout_width="match_parent"
@@ -255,6 +281,15 @@
                     android:text="@string/controller_section_body"
                     android:textColor="#5F6368"
                     android:textSize="13sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/scanPairingButton"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/scan_pairing_qr"
+                    android:textAllCaps="false" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/refreshDevicesButton"

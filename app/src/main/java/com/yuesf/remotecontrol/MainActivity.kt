@@ -1,21 +1,29 @@
 package com.yuesf.remotecontrol
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
+import com.google.zxing.BarcodeFormat
+import com.journeyapps.barcodescanner.BarcodeEncoder
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.agent.RemoteAgentService
 import com.yuesf.remotecontrol.data.AppPreferences
@@ -27,6 +35,7 @@ import com.yuesf.remotecontrol.signaling.SignalingRepository
 import com.yuesf.remotecontrol.signaling.SignalingState
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import org.json.JSONObject
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -35,6 +44,31 @@ class MainActivity : AppCompatActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
+
+    private val capturePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == Activity.RESULT_OK && data != null) {
+            requestNotificationPermissionIfNeeded()
+            runCatching { RemoteAgentService.startWithProjection(this, data) }
+                .onFailure { error ->
+                    toast(
+                        getString(
+                            R.string.agent_start_failed,
+                            error.message ?: error.javaClass.simpleName,
+                        ),
+                    )
+                }
+        } else {
+            toast(getString(R.string.capture_permission_denied))
+        }
+        renderRole()
+    }
+
+    private val scanPairingLauncher = registerForActivityResult(ScanContract()) { result ->
+        result.contents?.let(::applyPairingPayload)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,13 +113,34 @@ class MainActivity : AppCompatActivity() {
             saveAndApply()
         }
         binding.startAgentButton.setOnClickListener {
-            startAgentService()
+            saveAndApply()
         }
         binding.stopAgentButton.setOnClickListener {
             RemoteAgentService.stop(this)
             SignalingRepository.disconnect()
             binding.connectionStatusText.text = getString(R.string.status_disconnected)
             renderRole()
+        }
+        binding.grantCaptureButton.setOnClickListener {
+            val config = persistForm() ?: return@setOnClickListener
+            if (config.role != DeviceRole.AGENT) {
+                return@setOnClickListener
+            }
+            requestNotificationPermissionIfNeeded()
+            val manager = getSystemService(MediaProjectionManager::class.java)
+            runCatching { capturePermissionLauncher.launch(manager.createScreenCaptureIntent()) }
+                .onFailure { toast(getString(R.string.settings_unavailable)) }
+        }
+        binding.showPairingQrButton.setOnClickListener {
+            showPairingQr()
+        }
+        binding.scanPairingButton.setOnClickListener {
+            val options = ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setBeepEnabled(false)
+                .setOrientationLocked(false)
+                .setPrompt(getString(R.string.pairing_qr_prompt))
+            scanPairingLauncher.launch(options)
         }
         binding.refreshDevicesButton.setOnClickListener {
             if (!SignalingRepository.refreshDevices()) {
@@ -195,6 +250,13 @@ class MainActivity : AppCompatActivity() {
             if (agent && !RemoteAgentService.isRunning) LinearLayout.VISIBLE else LinearLayout.GONE
         binding.stopAgentButton.visibility =
             if (agent && RemoteAgentService.isRunning) LinearLayout.VISIBLE else LinearLayout.GONE
+        binding.captureStatusText.setText(
+            if (RemoteAgentService.isCaptureAuthorized) {
+                R.string.capture_available
+            } else {
+                R.string.capture_unavailable
+            },
+        )
         renderAccessibilityStatus()
     }
 
@@ -246,13 +308,16 @@ class MainActivity : AppCompatActivity() {
                     topMargin = (8 * resources.displayMetrics.density).toInt()
                 }
                 setOnClickListener {
-                    val sent = SignalingRepository.sendControlRequest(device.deviceId)
-                    toast(
-                        if (sent) {
-                            getString(R.string.control_request_sent, device.deviceName)
-                        } else {
-                            getString(R.string.signaling_not_connected)
-                        },
+                    startActivity(
+                        Intent(this@MainActivity, RemoteSessionActivity::class.java)
+                            .putExtra(
+                                RemoteSessionActivity.EXTRA_TARGET_DEVICE_ID,
+                                device.deviceId,
+                            )
+                            .putExtra(
+                                RemoteSessionActivity.EXTRA_TARGET_DEVICE_NAME,
+                                device.deviceName,
+                            ),
                     )
                 }
             }
@@ -262,6 +327,79 @@ class MainActivity : AppCompatActivity() {
 
     private fun currentRole(): DeviceRole =
         if (binding.agentRoleButton.isChecked) DeviceRole.AGENT else DeviceRole.CONTROLLER
+
+    private fun showPairingQr() {
+        val config = persistForm() ?: return
+        if (config.role != DeviceRole.AGENT) {
+            toast(getString(R.string.pairing_config_required))
+            return
+        }
+
+        val payload = JSONObject()
+            .put("version", 1)
+            .put("server", config.serverUrl.toString().trimEnd('/'))
+            .put("token", config.authToken)
+            .put("deviceId", config.deviceId)
+            .put("deviceName", config.deviceName)
+            .put("role", DeviceRole.AGENT.wireValue)
+
+        val bitmap = runCatching {
+            BarcodeEncoder().encodeBitmap(payload.toString(), BarcodeFormat.QR_CODE, 720, 720)
+        }.getOrElse {
+            toast(getString(R.string.pairing_invalid))
+            return
+        }
+
+        val imageView = ImageView(this).apply {
+            setImageBitmap(bitmap)
+            adjustViewBounds = true
+            setPadding(24, 24, 24, 24)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.pairing_qr_title)
+            .setMessage(R.string.pairing_qr_prompt)
+            .setView(imageView)
+            .setPositiveButton(R.string.close, null)
+            .show()
+    }
+
+    private fun applyPairingPayload(content: String) {
+        val payload = runCatching { JSONObject(content) }.getOrNull()
+        if (payload == null || payload.optInt("version") != 1) {
+            toast(getString(R.string.pairing_invalid))
+            return
+        }
+
+        val server = payload.optString("server")
+        val token = payload.optString("token")
+        val targetName = payload.optString("deviceName", "B 设备")
+        val parsedUrl = server.toHttpUrlOrNull()
+        if (parsedUrl == null ||
+            (parsedUrl.scheme != "http" && parsedUrl.scheme != "https") ||
+            token.length < 16
+        ) {
+            toast(getString(R.string.pairing_invalid))
+            return
+        }
+
+        binding.serverUrlInput.setText(server)
+        binding.tokenInput.setText(token)
+        binding.controllerRoleButton.isChecked = true
+
+        val ownName = preferences.savedDeviceName()
+        val config = preferences.save(server, token, ownName, DeviceRole.CONTROLLER)
+        if (config == null) {
+            toast(getString(R.string.pairing_invalid))
+            return
+        }
+
+        if (RemoteAgentService.isRunning) {
+            RemoteAgentService.stop(this)
+        }
+        SignalingRepository.connect(config)
+        renderRole()
+        toast(getString(R.string.pairing_success, targetName))
+    }
 
     private fun openSettings(intent: Intent) {
         runCatching { startActivity(intent) }

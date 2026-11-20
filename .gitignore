@@ -1,6 +1,7 @@
 # Android and Gradle
 .gradle/
 build/
+.kotlin/
 local.properties
 .cxx/
 *.apk
