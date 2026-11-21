@@ -40,6 +40,13 @@ export interface PublicDevice {
   role: DeviceRole;
   deviceName: string;
   connectedAt: string;
+  /**
+   * 最后一次收到该设备存活证据的时间（ISO）。
+   *
+   * 「连着」和「活着」是两件事：连接可能还挂在服务端，但设备已经进 Doze、
+   * 被 ROM 冻结、或者连着一条黑洞 TCP。控制端据此判断还能不能真的连上去。
+   */
+  lastSeenAt: string;
 }
 
 export function parseClientMessage(raw: string, maximumBytes: number): ClientMessage {

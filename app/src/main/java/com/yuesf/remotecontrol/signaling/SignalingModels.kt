@@ -7,6 +7,13 @@ data class DeviceInfo(
     val deviceId: String,
     val role: DeviceRole,
     val deviceName: String,
+    /**
+     * 服务端最后一次收到该设备存活证据的时间（ISO-8601）。
+     *
+     * 空值表示服务端版本较旧、还没下发这个字段，此时只能按「连接存在」判断在线，
+     * 显示上退回旧行为，不能因为拿不到时间就把设备标成离线。
+     */
+    val lastSeenAt: String? = null,
 )
 
 data class RemoteSignal(

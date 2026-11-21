@@ -8,6 +8,8 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.ImageView
@@ -42,6 +44,7 @@ import com.yuesf.remotecontrol.signaling.SignalingState
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.text.SimpleDateFormat
+import java.time.Instant
 import java.util.Date
 import java.util.Locale
 
@@ -62,6 +65,31 @@ class MainActivity : AppCompatActivity() {
      * 其它生命周期回调必须提前返回，否则 lateinit 会抛异常。
      */
     private var spaceBlocked = false
+
+    /** 最近一次拿到的设备列表。本地重算在线状态时直接复用，不需要重新联网。 */
+    private var latestDevices: List<DeviceInfo> = emptyList()
+    private val presenceHandler = Handler(Looper.getMainLooper())
+    private var presenceTickCount = 0
+
+    /**
+     * 在线状态刷新节奏。
+     *
+     * 每 30 秒只用本机时间重算一次显示（零网络开销），每 4 次（2 分钟）才向服务端
+     * 要一次最新列表。被控端 10 分钟才上报一次，控制端没必要秒级轮询；
+     * 但又不能只在收到推送时更新，否则「对方悄悄失联」这件事界面永远发现不了。
+     */
+    private val presenceTicker = object : Runnable {
+        override fun run() {
+            presenceTickCount += 1
+            if (presenceTickCount % 4 == 0) {
+                runCatching { SignalingRepository.refreshDevices() }
+            }
+            if (latestDevices.isNotEmpty()) {
+                renderDevices(latestDevices)
+            }
+            presenceHandler.postDelayed(this, PRESENCE_TICK_MS)
+        }
+    }
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -206,6 +234,13 @@ class MainActivity : AppCompatActivity() {
         ) {
             SignalingRepository.refreshDevices()
         }
+        presenceHandler.removeCallbacks(presenceTicker)
+        presenceHandler.postDelayed(presenceTicker, PRESENCE_TICK_MS)
+    }
+
+    override fun onPause() {
+        presenceHandler.removeCallbacks(presenceTicker)
+        super.onPause()
     }
 
     private fun populateForm() {
@@ -614,6 +649,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderDevices(devices: List<DeviceInfo>) {
+        latestDevices = devices
         binding.deviceListContainer.removeAllViews()
         val agents = devices.filter {
             it.role == DeviceRole.AGENT && it.deviceId != preferences.deviceId
@@ -622,8 +658,9 @@ class MainActivity : AppCompatActivity() {
             if (agents.isEmpty()) TextView.VISIBLE else TextView.GONE
 
         for (device in agents) {
+            val presence = presenceLabel(device)
             val button = MaterialButton(this).apply {
-                text = getString(R.string.connect_device, device.deviceName)
+                text = getString(R.string.connect_device_with_presence, device.deviceName, presence)
                 isAllCaps = false
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
@@ -646,6 +683,27 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             binding.deviceListContainer.addView(button)
+        }
+    }
+
+    /**
+     * 三档在线状态，按「距最后一次上报多久」算，而不是按「连接还在不在」算。
+     *
+     * 这是关键区别：连接可能还挂在服务端，但设备已经进 Doze 或被 ROM 冻结，
+     * 点进去必然连不上。旧实现只要连接还在就显示在线，等于骗用户。
+     *
+     * 拿不到 lastSeenAt（服务端还是旧版本）时退回「在线」，不能因为缺字段就说人家失联。
+     */
+    private fun presenceLabel(device: DeviceInfo): String {
+        val raw = device.lastSeenAt ?: return getString(R.string.presence_online)
+        val seenAt = runCatching { Instant.parse(raw).toEpochMilli() }.getOrNull()
+            ?: return getString(R.string.presence_online)
+        // 服务端与本机时钟可能有几秒偏差，算出负数时按刚上报处理。
+        val minutes = ((System.currentTimeMillis() - seenAt) / 60_000).coerceAtLeast(0).toInt()
+        return when {
+            minutes < PRESENCE_ONLINE_WINDOW_MINUTES -> getString(R.string.presence_online)
+            minutes < PRESENCE_LOST_WINDOW_MINUTES -> getString(R.string.presence_minutes_ago, minutes)
+            else -> getString(R.string.presence_lost)
         }
     }
 
@@ -732,5 +790,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private companion object {
+        /** 本地重算在线状态的节奏。不发网络请求，只是一次文本重排。 */
+        const val PRESENCE_TICK_MS = 30_000L
+
+        /** 距最后一次上报多久以内算「在线」，与被控端的心跳周期一致。 */
+        const val PRESENCE_ONLINE_WINDOW_MINUTES = 10
+
+        /** 超过多久算「已失联」，等于 3 个心跳周期，和服务端的判定阈值对齐。 */
+        const val PRESENCE_LOST_WINDOW_MINUTES = 30
     }
 }

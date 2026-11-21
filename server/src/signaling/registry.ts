@@ -33,15 +33,31 @@ export class DeviceRegistry {
       }
     }
 
+    const now = new Date().toISOString();
     const device: RegisteredDevice = {
       deviceId,
       role,
       deviceName,
-      connectedAt: new Date().toISOString(),
+      connectedAt: now,
+      lastSeenAt: now,
       sink,
     };
     this.devices.set(deviceId, device);
     return device;
+  }
+
+  /**
+   * 记录一次「设备还活着」的证据：收到它的任何消息，或者 pong 回来了。
+   *
+   * 只在注册表里记录，不改连接本身——连接死活由 WebSocket 层判断，
+   * 这里只回答「最近有没有动静」。
+   */
+  touch(deviceId: string): void {
+    const device = this.devices.get(deviceId);
+    if (!device) {
+      return;
+    }
+    device.lastSeenAt = new Date().toISOString();
   }
 
   unregister(deviceId: string, sink: DeviceSink): boolean {

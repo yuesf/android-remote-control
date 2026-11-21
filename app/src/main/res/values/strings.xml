@@ -67,6 +67,15 @@
     <string name="connection_failed">连接失败：%1$s</string>
     <string name="test_only_notice">当前为联调版本：公网访问必须配置 TLS 或可信网络，令牌仅保存在本机应用私有目录。</string>
     <string name="connect_device">连接到 %1$s</string>
+    <string name="connect_device_with_presence">连接到 %1$s（%2$s）</string>
+    <!--
+        被控端每 10 分钟上报一次存活。三档显示：
+        刚上报过 = 在线；10~30 分钟没动静 = 可能离线；超过 30 分钟 = 失联。
+    -->
+    <string name="presence_online">在线</string>
+    <string name="presence_minutes_ago">%1$d 分钟前</string>
+    <string name="presence_lost">已失联</string>
+    <string name="no_online_devices">暂无在线被控端（失联设备不再列出）</string>
     <string name="grant_capture">授权屏幕采集</string>
     <string name="capture_available">屏幕采集授权已就绪，等待 A 发起连接</string>
     <string name="capture_unavailable">尚未授权屏幕采集，A 发起连接时无法建立画面</string>

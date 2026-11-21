@@ -18,6 +18,9 @@ export class SignalingHub {
   attachSocket(socket: WebSocket): void {
     let registeredDeviceId: string | null = null;
     let registeredSink: DeviceSink | null = null;
+    // 心跳循环在 server.ts 里，它需要知道这条 socket 对应哪台设备，
+    // 才能在 pong 回来时刷新 lastSeenAt。
+    const tracked = socket as WebSocket & { deviceId?: string };
 
     const sink: DeviceSink = {
       send: (data) => {
@@ -78,6 +81,7 @@ export class SignalingHub {
         );
         registeredDeviceId = message.deviceId;
         registeredSink = sink;
+        tracked.deviceId = message.deviceId;
         this.options.logger.info("Device registered", {
           deviceId: device.deviceId,
           role: device.role,
@@ -98,6 +102,9 @@ export class SignalingHub {
         sendError("NOT_REGISTERED", "Register before sending other messages");
         return;
       }
+
+      // 任何一条消息都是「还活着」的证据，比心跳更准时。
+      this.options.registry.touch(registeredDeviceId);
 
       if (message.type === "list_devices") {
         send({ type: "devices", devices: this.options.registry.listPublic() });

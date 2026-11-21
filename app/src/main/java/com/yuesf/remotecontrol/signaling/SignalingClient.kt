@@ -2,6 +2,7 @@ package com.yuesf.remotecontrol.signaling
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import com.yuesf.remotecontrol.data.DeviceRole
 import com.yuesf.remotecontrol.data.SignalingConfig
@@ -25,24 +26,26 @@ class SignalingClient(private val listener: Listener) {
     }
 
     /**
-     * 必须自己 ping，但没必要 ping 得那么勤。
+     * 客户端**不再主动 ping**，保活完全交给服务端每 10 分钟一次的 ping。
      *
-     * 曾经为了省电刻意不设 pingInterval，靠服务端每 60 秒的 ping 保活。
-     * 但那只保住了 NAT 映射，保不住「本端还活着」这个判断：socket 被静默掐断
-     * （熄屏挂起、切网、运营商回收）后，客户端没有读也没有写，就永远发现不了，
-     * 于是一直停在 READY，既不重连也不再处理任何下行消息。
+     * 每次 ping 都会把 Wi-Fi 芯片从省电态拽起来、射频按高功率发一小段。
+     * 60 秒一次是一天 1440 次唤醒，25 秒一次是 3456 次——这是待机耗电里
+     * 数得着的一项，而它换来的只是「更早一点发现断线」。
      *
-     * 之后一度设成 25 秒——这在小流量套餐和待机上都是纯粹的浪费：每发一次 ping
-     * 都会把 Wi-Fi 芯片从省电态拽起来、射频按最大功率发一小段，一天 3456 次。
-     *
-     * 现在设 60 秒，理由是**服务端自己也在每 60 秒 ping 一次**：真断线时服务端会
-     * 先发现并关掉这条连接，客户端随后收到 FIN/RST 就会重连。客户端本端 ping 只是
-     * 「万一服务端也没发现」的兜底，60 秒一次完全够用。
+     * 现在的心跳契约是：
+     * - 服务端每 10 分钟 ping 一次，客户端库自动回 pong（不动应用代码）；
+     * - 连续 3 次不回，服务端 terminate，本端收到关闭回调后重连；
+     * - 本端另有 `lastInboundAt` 兜底：超过 [STALE_INBOUND_TIMEOUT_MS] 没收到
+     *   任何数据，即使标记为 online 也主动重建连接（黑洞 TCP 只能这么破）。
      */
     private val httpClient = OkHttpClient.Builder()
-        .pingInterval(60, TimeUnit.SECONDS)
+        .pingInterval(0, TimeUnit.SECONDS)
         .build()
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** 最后一次收到服务端字节的时间（elapsedRealtime），用于识别「连接挂着但已死」。 */
+    @Volatile
+    private var lastInboundAt: Long = SystemClock.elapsedRealtime()
 
     @Volatile
     private var config: SignalingConfig? = null
@@ -62,17 +65,19 @@ class SignalingClient(private val listener: Listener) {
     private var reconnectRunnable: Runnable? = null
 
     @Synchronized
-    fun connect(newConfig: SignalingConfig) {
+    fun connect(newConfig: SignalingConfig, force: Boolean = false) {
         // 幂等：界面和服务都会调用 connect，但它们是同一个单例。
         // 以前每次都 cancel + 重开，导致「刚注册好就被自己踢掉」的抖动，
         // 旧 socket 的失败回调还可能把新连接的 online/socket 一起清掉。
-        if (!manuallyClosed && online && config == newConfig) {
+        // force=true 用于「连接僵死但状态还写着在线」的场景，比如 ensureConnected 判超时。
+        if (!force && !manuallyClosed && online && config == newConfig) {
             return
         }
-        FileLog.append("connect: ${newConfig.deviceName} (online=$online)")
+        FileLog.append("connect: ${newConfig.deviceName} (online=$online force=$force)")
         config = newConfig
         manuallyClosed = false
         online = false
+        lastInboundAt = SystemClock.elapsedRealtime()
         reconnectAttempt = 0
         reconnectScheduled = false
         generation += 1
@@ -114,10 +119,17 @@ class SignalingClient(private val listener: Listener) {
             return
         }
         if (online) {
-            return
+            val silence = SystemClock.elapsedRealtime() - lastInboundAt
+            if (silence < STALE_INBOUND_TIMEOUT_MS) {
+                return
+            }
+            // 「标记在线」不等于「真的通」：黑洞 TCP 下 socket 不会报错，
+            // 只会一直安静。这种连接只能主动丢弃重建。
+            FileLog.append("ensureConnected: silent ${silence / 60_000}min, rebuild")
+        } else {
+            FileLog.append("ensureConnected: reconnect (attempt=$reconnectAttempt)")
         }
-        FileLog.append("ensureConnected: reconnect (attempt=$reconnectAttempt)")
-        connect(activeConfig)
+        connect(activeConfig, force = true)
     }
 
     fun refreshDevices(): Boolean = sendJson(JSONObject().put("type", "list_devices"))
@@ -279,6 +291,7 @@ class SignalingClient(private val listener: Listener) {
                     deviceId = deviceId,
                     role = DeviceRole.fromWire(item.optString("role")),
                     deviceName = deviceName,
+                    lastSeenAt = item.optString("lastSeenAt").takeIf { it.isNotBlank() },
                 ),
             )
         }
@@ -288,6 +301,8 @@ class SignalingClient(private val listener: Listener) {
         private val expectedGeneration: Int,
     ) : WebSocketListener() {
         override fun onMessage(webSocket: WebSocket, text: String) {
+            // 任何一帧都算「连接还活着」的证据，供 ensureConnected 判断黑洞 TCP。
+            lastInboundAt = SystemClock.elapsedRealtime()
             if (expectedGeneration != generation) {
                 Log.d(TAG, "drop stale message, gen=$expectedGeneration current=$generation")
                 return
@@ -380,5 +395,14 @@ class SignalingClient(private val listener: Listener) {
     companion object {
         private const val TAG = "SignalingClient"
         private const val CLOSE_DEVICE_REPLACED = 4001
+
+        /**
+         * 多久没收到服务端任何字节就认为这条连接已经死了。
+         *
+         * 服务端 10 分钟一次 ping，正常情况下本端每 10 分钟至少收到一帧。
+         * 取 35 分钟 = 3 个心跳周期再多一点，和服务端「3 次没回就失联」对齐：
+         * 服务端判死它会关连接，服务端自己出问题时则靠这个超时兜底。
+         */
+        private const val STALE_INBOUND_TIMEOUT_MS = 35 * 60 * 1000L
     }
 }

@@ -11,10 +11,31 @@ interface AttachedSignalingServer {
   close(): Promise<void>;
 }
 
-type HeartbeatSocket = WebSocket & { isAlive?: boolean };
+type HeartbeatSocket = WebSocket & {
+  isAlive?: boolean;
+  missedHeartbeats?: number;
+  deviceId?: string;
+};
 
 /** ws 的 readyState 常量：WebSocket 只是类型导入，取不到静态属性。 */
 const WS_CLOSED = 3;
+const WS_OPEN = 1;
+
+/**
+ * 心跳周期 10 分钟，连续 3 次没有回应才判定失联（约 30 分钟）。
+ *
+ * 这个值的取舍很直接：待机时每次 ping 都会把手机的射频从 idle 拉到高功耗状态
+ * 数秒，60 秒一次等于一天 1440 次唤醒，是待机耗电的主要来源之一。
+ * 拉到 10 分钟，唤醒次数降到 144 次，而代价只是「掉线要被发现得晚一点」。
+ *
+ * 为什么敢放到 10 分钟：运营商 NAT 的 TCP 会话超时通常在 5 分钟以上，
+ * 加上客户端有自己的重连与精确闹钟兜底，即使这条连接被中间设备回收也能自愈。
+ *
+ * 为什么是 3 次而不是 1 次：一次丢包、一次弱网、一次射频休眠都可能漏掉单轮心跳，
+ * 用 1 次判定会把「短暂抖动」误判成「失联」，控制端就会反复看到设备上下线。
+ */
+const HEARTBEAT_INTERVAL_MS = 10 * 60_000;
+const MAX_MISSED_HEARTBEATS = 3;
 
 export function attachSignalingServer(
   server: Server,
@@ -35,33 +56,44 @@ export function attachSignalingServer(
 
   webSocketServer.on("connection", (socket: HeartbeatSocket) => {
     socket.isAlive = true;
+    socket.missedHeartbeats = 0;
     socket.on("pong", () => {
       socket.isAlive = true;
+      socket.missedHeartbeats = 0;
+      // pong 是设备「还活着」的直接证据，立刻刷新它的最后上报时间，
+      // 控制端据此判断这台设备是「真在线」还是「连接挂着但已经哑了」。
+      if (socket.deviceId) {
+        registry.touch(socket.deviceId);
+      }
     });
     hub.attachSocket(socket);
   });
 
   /**
-   * 心跳间隔 60 秒。
+   * 心跳循环：每 10 分钟探一次，连续 3 次没回应就掐掉这条连接。
    *
-   * 这个值直接决定被控端的待机耗电：移动网络下每次 ping 都会把射频从 idle
-   * 拉到高功耗状态数秒，30 秒一次等于持续唤醒。60 秒仍远小于运营商 NAT
-   * 的会话超时（通常 5 分钟），足以保住映射；配合客户端不再主动 ping，
-   * 待机心跳流量减少约三分之二。
-   *
-   * 代价是死连接最迟 120 秒才被发现（一轮未响应 + 下一轮 terminate）。
+   * 注意这里**只**判定传输层死活。设备「连着但很卡」不会因此掉线，
+   * 那是控制端根据 `lastSeenAt` 自己决定的。
    */
   const heartbeat = setInterval(() => {
     for (const client of webSocketServer.clients) {
       const socket = client as HeartbeatSocket;
-      if (socket.isAlive === false) {
+      if (socket.readyState !== WS_OPEN) {
+        continue;
+      }
+      const missed = socket.missedHeartbeats ?? 0;
+      if (missed >= MAX_MISSED_HEARTBEATS) {
+        logger.warn("Device missed heartbeats, terminating", {
+          deviceId: socket.deviceId ?? "unknown",
+          missed,
+        });
         socket.terminate();
         continue;
       }
-      socket.isAlive = false;
+      socket.missedHeartbeats = missed + 1;
       socket.ping();
     }
-  }, 60_000);
+  }, HEARTBEAT_INTERVAL_MS);
   heartbeat.unref();
 
   const handleUpgrade = (request: import("node:http").IncomingMessage, socket: Duplex, head: Buffer): void => {
