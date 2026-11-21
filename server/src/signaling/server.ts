@@ -1,4 +1,4 @@
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { AppConfig } from "../config.js";
@@ -50,7 +50,7 @@ export function attachSignalingServer(
     iceServers: config.iceServers,
   });
 
-  webSocketServer.on("connection", (socket: HeartbeatSocket) => {
+  webSocketServer.on("connection", (socket: HeartbeatSocket, request: IncomingMessage) => {
     socket.isAlive = true;
     socket.missedHeartbeats = 0;
     socket.on("pong", () => {
@@ -62,7 +62,9 @@ export function attachSignalingServer(
         registry.touch(socket.deviceId);
       }
     });
-    hub.attachSocket(socket);
+    // 记录对端地址：移动网络下同一台设备的公网出口会漂移（NAT 重绑定），
+    // 掉线时对比「注册时的出口」和「断开时的出口」就能区分是 NAT 换端口还是链路断了。
+    hub.attachSocket(socket, request.socket.remoteAddress);
   });
 
   /**
@@ -107,7 +109,7 @@ export function attachSignalingServer(
 
   scheduleHeartbeat();
 
-  const handleUpgrade = (request: import("node:http").IncomingMessage, socket: Duplex, head: Buffer): void => {
+  const handleUpgrade = (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (url.pathname !== "/ws") {
       socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");

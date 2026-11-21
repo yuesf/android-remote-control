@@ -15,9 +15,11 @@ interface HubOptions {
 export class SignalingHub {
   constructor(private readonly options: HubOptions) {}
 
-  attachSocket(socket: WebSocket): void {
+  attachSocket(socket: WebSocket, remoteAddress?: string): void {
     let registeredDeviceId: string | null = null;
     let registeredSink: DeviceSink | null = null;
+    const openedAt = Date.now();
+    const peer = remoteAddress ?? "unknown";
     // 心跳循环在 server.ts 里，它需要知道这条 socket 对应哪台设备，
     // 才能在 pong 回来时刷新 lastSeenAt。
     const tracked = socket as WebSocket & { deviceId?: string };
@@ -86,6 +88,7 @@ export class SignalingHub {
           deviceId: device.deviceId,
           role: device.role,
           deviceName: device.deviceName,
+          remoteAddress: peer,
         });
 
         send({
@@ -157,14 +160,23 @@ export class SignalingHub {
       handleMessage(data.toString("utf8"));
     });
 
-    socket.on("close", () => {
+    socket.on("close", (code: number, reason: Buffer) => {
       if (registeredDeviceId === null || registeredSink === null) {
         return;
       }
 
       const removed = this.options.registry.unregister(registeredDeviceId, registeredSink);
       if (removed) {
-        this.options.logger.info("Device disconnected", { deviceId: registeredDeviceId });
+        // code/reason 是排查「设备莫名其妙掉线」的关键证据：
+        // 1006 = 对端没发 close 帧，TCP 直接没了（网络中断或被 RST）；
+        // 1000/4001 = 有人主动关的，两者处置方式完全不同。
+        this.options.logger.info("Device disconnected", {
+          deviceId: registeredDeviceId,
+          code,
+          reason: reason.toString() || "no reason",
+          durationMs: Date.now() - openedAt,
+          remoteAddress: peer,
+        });
         this.broadcastPresence();
       }
     });
