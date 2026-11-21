@@ -3,11 +3,14 @@ package com.yuesf.remotecontrol.webrtc
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjection
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
+import org.webrtc.CapturerObserver
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SurfaceTextureHelper
+import org.webrtc.VideoFrame
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import kotlin.math.min
@@ -22,6 +25,21 @@ import kotlin.math.min
  *
  * 正确做法是授权后立刻建好 capturer / source / track 并持有，
  * 后续每次会话只复用同一个 [VideoTrack]，开关采集即可。
+ *
+ * ## 省电：两档采集规格
+ *
+ * 常驻不等于满负荷。`ScreenCapturerAndroid.stopCapture()` 会
+ * `virtualDisplay.release()` 并且 `mediaProjection.stop()`（已反编译确认），
+ * 一旦停采集授权就废了，下次连接又得让用户重新点系统框。所以**不能停**，
+ * 只能在「继续出帧」的前提下把规格压到最低：
+ *
+ * - 空闲档 [IDLE_FPS] / [IDLE_MAX_DIMENSION]：没有会话时，屏幕内容变了也
+ *   只按每秒 1 帧往 WebRTC 送，虚拟屏缩到 360 宽。彻底避免「手机亮着、
+ *   用户在刷视频，后台 60fps 满分辨率在合成+拷贝却没人看」。
+ * - 会话档 [SESSION_FPS] / 全尺寸：真正连接时才恢复，出帧质量不受影响。
+ *
+ * 限帧是自己做的：webrtc 的 `changeCaptureFormat(w,h,fps)` 只 resize 虚拟屏，
+ * fps 参数被忽略（同样反编译确认），所以必须在 [CapturerObserver] 上包一层丢帧。
  */
 class ScreenCaptureHolder {
     private var capturer: ScreenCapturerAndroid? = null
@@ -29,9 +47,25 @@ class ScreenCaptureHolder {
     private var source: VideoSource? = null
     private var track: VideoTrack? = null
 
+    /** 屏幕原始尺寸，会话档用这个。 */
+    private var fullWidth = 720
+    private var fullHeight = 1280
+
+    /** 虚拟屏当前尺寸，空闲档会缩到 [IDLE_MAX_DIMENSION]。 */
     private var captureWidth = 720
     private var captureHeight = 1280
+
     private var capturing = false
+
+    /** 目标出帧率。空闲 1fps，会话 12fps。 */
+    @Volatile
+    private var targetFps = IDLE_FPS
+
+    /** 上一次真正送给 WebRTC 的帧时间戳，用于限帧。 */
+    private var lastDeliveredAt = 0L
+
+    @Volatile
+    private var idle = true
 
     /** 用户在系统层（或系统策略）终止了投屏，需要通知调用方结束会话。 */
     @Volatile
@@ -42,6 +76,39 @@ class ScreenCaptureHolder {
             Log.w(TAG, "projection stopped by system")
             release()
             onProjectionStopped?.invoke()
+        }
+    }
+
+    /**
+     * 限帧闸门。
+     *
+     * 虚拟屏的帧是 SurfaceFlinger 按合成结果推上来的，屏幕变化越频繁帧越多
+     * （刷短视频时能到 60fps），`startCapture` 的 fps 参数管不住它。
+     * 这里在进 WebRTC 之前按目标帧率丢弃多余帧，把解码/编码/网络三端完全摘掉。
+     *
+     * **丢弃时绝对不能自己 release**：webrtc 的 `SurfaceTextureHelper.tryDeliverTextureFrame`
+     * 在 `onFrameCaptured` 返回后会自己对同一个 VideoFrame 调 `release()`
+     * （SurfaceTextureHelper.java:371），谁先释放谁就把进程带走——
+     * 现象是 `IllegalStateException: release() called on an object with refcount < 1`
+     * 直接闪退。所以这里只做「不转发」，所有权仍然留在 webrtc 手里。
+     */
+    private val throttlingObserver = object : CapturerObserver {
+        override fun onCapturerStarted(success: Boolean) {
+            source?.capturerObserver?.onCapturerStarted(success)
+        }
+
+        override fun onCapturerStopped() {
+            source?.capturerObserver?.onCapturerStopped()
+        }
+
+        override fun onFrameCaptured(frame: VideoFrame) {
+            val fps = targetFps.coerceAtLeast(1)
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastDeliveredAt < 1000L / fps) {
+                return
+            }
+            lastDeliveredAt = now
+            source?.capturerObserver?.onFrameCaptured(frame)
         }
     }
 
@@ -57,8 +124,10 @@ class ScreenCaptureHolder {
         return runCatching {
             WebRtcEngine.initialize(context)
             val dimensions = captureSize(context)
-            captureWidth = dimensions.first
-            captureHeight = dimensions.second
+            fullWidth = dimensions.first
+            fullHeight = dimensions.second
+            captureWidth = fullWidth
+            captureHeight = fullHeight
 
             val newCapturer = ScreenCapturerAndroid(projectionData, projectionCallback)
             val newTextureHelper = SurfaceTextureHelper.create(
@@ -68,11 +137,12 @@ class ScreenCaptureHolder {
             val newSource = WebRtcEngine.createVideoSource(true)
             val newTrack = WebRtcEngine.createVideoTrack(SCREEN_TRACK_ID, newSource)
 
-            newCapturer.initialize(newTextureHelper, context, newSource.capturerObserver)
+            // 先落 source，throttlingObserver 要往里转发。
+            source = newSource
+            newCapturer.initialize(newTextureHelper, context, throttlingObserver)
 
             capturer = newCapturer
             textureHelper = newTextureHelper
-            source = newSource
             track = newTrack
             Log.i(TAG, "capture prepared at ${captureWidth}x$captureHeight")
             true
@@ -88,8 +158,14 @@ class ScreenCaptureHolder {
     @Synchronized
     fun videoTrack(): VideoTrack? = track
 
+    /** 对端只关心画面宽高比，尺寸始终报屏幕原始尺寸，不受空闲档影响。 */
     @Synchronized
-    fun dimensions(): Pair<Int, Int> = captureWidth to captureHeight
+    fun dimensions(): Pair<Int, Int> = fullWidth to fullHeight
+
+    /** 诊断面板用：当前采集档位。 */
+    @Synchronized
+    fun profileLabel(): String =
+        "${if (idle) "空闲" else "会话"} ${captureWidth}x$captureHeight@${targetFps}fps"
 
     @Synchronized
     fun startCapture() {
@@ -98,10 +174,63 @@ class ScreenCaptureHolder {
             return
         }
         runCatching {
-            active.startCapture(captureWidth, captureHeight, CAPTURE_FRAMES_PER_SECOND)
+            active.startCapture(captureWidth, captureHeight, targetFps)
             capturing = true
-            Log.i(TAG, "capture started")
+            Log.i(TAG, "capture started at ${captureWidth}x$captureHeight@${targetFps}fps")
         }.onFailure { Log.e(TAG, "startCapture failed", it) }
+    }
+
+    /**
+     * 切到会话档：全尺寸 + [SESSION_FPS]。
+     *
+     * 必须在建 PeerConnection、发 offer 之前调用。`changeCaptureFormat` 内部是
+     * `invokeAtFrontUninterruptibly`，返回时虚拟屏已经 resize 完，所以紧接着
+     * `startCapture` / 出帧拿到的一定是新尺寸，不会有「第一帧还是小尺寸」的问题。
+     */
+    @Synchronized
+    fun enterSessionMode() {
+        idle = false
+        targetFps = SESSION_FPS
+        applyFormat(fullWidth, fullHeight)
+    }
+
+    /**
+     * 切到空闲档：360 宽 + 1fps。会话结束、没有任何会话时调用。
+     *
+     * 只 resize、不停采集：一旦 stopCapture，MediaProjection 就被系统收回，
+     * 下次连接要用户重新授权，代价远大于省下的电。
+     */
+    @Synchronized
+    fun enterIdleMode() {
+        idle = true
+        targetFps = IDLE_FPS
+        val scale = min(1f, IDLE_MAX_DIMENSION / maxOf(fullWidth, fullHeight).toFloat())
+        val width = ((fullWidth * scale).toInt() and -2).coerceAtLeast(2)
+        val height = ((fullHeight * scale).toInt() and -2).coerceAtLeast(2)
+        applyFormat(width, height)
+    }
+
+    private fun applyFormat(width: Int, height: Int) {
+        if (width == captureWidth && height == captureHeight) {
+            return
+        }
+        val active = capturer ?: return
+        if (!capturing) {
+            // 还没开始出帧：直接改记录值，随后的 startCapture 会用新尺寸。
+            captureWidth = width
+            captureHeight = height
+            return
+        }
+        runCatching { active.changeCaptureFormat(width, height, targetFps) }
+            .onSuccess {
+                captureWidth = width
+                captureHeight = height
+                Log.i(TAG, "capture format -> ${width}x$height (idle=$idle)")
+            }
+            .onFailure {
+                // 个别 ROM 的 resize 会失败：此时只丢帧降功耗，尺寸维持原样，不影响连接。
+                Log.w(TAG, "changeCaptureFormat failed, keep ${captureWidth}x$captureHeight", it)
+            }
     }
 
     @Synchronized
@@ -148,16 +277,19 @@ class ScreenCaptureHolder {
         private const val SCREEN_TRACK_ID = "screen0"
 
         /**
-         * 采集规格权衡：
-         * 1080 宽足够看清手机界面上的文字，同时把 H.264 的编码负载比 1280 降低约三成。
-         * 帧率降到 12fps——屏幕共享不需要 30fps，省下的是编码器功耗与发热。
-         *
-         * 注意这里**不能**在会话空闲时切换采集规格来省电：
-         * 切换必须 stopCapture → startCapture，等于释放并重建 VirtualDisplay，
-         * 而 Android 14 在所有 VirtualDisplay 释放后会直接 stop projection，
-         * 代价是用户每次连接都要重新授权一次屏幕采集。省下的电不值得。
+         * 会话档：1080 宽足够看清手机界面上的文字，H.264 编码负载比 1280 低约三成；
+         * 帧率 12fps——屏幕共享不需要 30fps，省下的是编码器功耗与发热。
          */
-        private const val CAPTURE_FRAMES_PER_SECOND = 12
+        private const val SESSION_FPS = 12
         private const val MAX_CAPTURE_DIMENSION = 1080f
+
+        /**
+         * 空闲档：1fps 只是为了让投影「看起来还在投」，够它不被系统回收；
+         * 真有人连进来时立刻切成会话档。
+         */
+        private const val IDLE_FPS = 1
+
+        /** 空闲档最长边。360x800 左右，足够让投影保持「真在投屏」，肉眼几乎看不出来。 */
+        private const val IDLE_MAX_DIMENSION = 360f
     }
 }

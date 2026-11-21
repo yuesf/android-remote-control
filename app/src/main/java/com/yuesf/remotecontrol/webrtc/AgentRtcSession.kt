@@ -68,7 +68,9 @@ class AgentRtcSession(
             val peer = WebRtcEngine.createPeerConnection(peerObserver).also { peerConnection = it }
             peer.addTrack(track, listOf("screen"))
             applyVideoSenderLimits(peer)
-            // 采集管线是常驻的，这里只是开始出帧；停会话时只停采集，不销毁管线。
+            // 先把采集规格提到会话档（全尺寸 + 12fps）再出帧：
+            // 空闲时为了省电是 360 宽 1fps，不切回来的话 A 看到的是糊的幻灯片。
+            capture.enterSessionMode()
             capture.startCapture()
 
             val channel = peer.createDataChannel("control", DataChannel.Init().apply { ordered = true })

@@ -10,7 +10,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
@@ -51,6 +53,22 @@ class RemoteAgentService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * 会话结束后延迟回到空闲档。
+     *
+     * 不立刻切：A 端手抖点断开、或是短暂抖动后马上重连时，立刻缩到 360 宽
+     * 会让重连后的第一眼是糊的，还要再切回来，来回 resize 纯属浪费。
+     */
+    private val enterIdleRunnable = Runnable {
+        if (agentSession == null) {
+            capture.enterIdleMode()
+            releaseWifiLock()
+            refreshNotification()
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         // 双开空间里的实例会持有独立 deviceId，与主空间实例抢同一个被控身份。
@@ -63,7 +81,11 @@ class RemoteAgentService : Service() {
         FileLog.append("service created")
         createNotificationChannel()
         isRunning = true
-        acquireKeepAliveLocks()
+        instance = this
+        acquireWakeLock()
+        if (HOLD_WIFI_LOCK_WHEN_IDLE) {
+            acquireWifiLock()
+        }
         Log.i(TAG, "service created, subscribing signals")
         // 系统层终止投屏时，把当前会话收掉，但服务继续在线等待下一次连接。
         capture.onProjectionStopped = {
@@ -110,6 +132,8 @@ class RemoteAgentService : Service() {
                 // 光拿到授权不够：Android 14 会回收「声明了 mediaProjection 却没有真正投屏」
                 // 的投影对象，表现就是刚授权完几秒又变成未授权。所以立刻开始出帧，
                 // 并让它常驻（会话结束时也不停），把投影保住。
+                // 先降档再出帧：虚拟屏一创建就是 360 宽，没有「先满规格再缩」的浪费。
+                capture.enterIdleMode()
                 capture.startCapture()
                 isCaptureAuthorized = true
                 refreshNotification()
@@ -139,28 +163,58 @@ class RemoteAgentService : Service() {
      * 且接收队列有 1 字节未读，服务端还认为设备在线，实际任何 control-request
      * 都得不到响应——A 端表现为「连不上」，而在 B 上看不出任何异常。
      *
-     * Wi-Fi 锁是另一半：熄屏后 radio 会进省电模式，抓包/唤醒都不可靠，
-     * 用 HIGH_PERF 让 Wi-Fi 保持全速，牺牲一点功耗换取随时可达。
+     * 所以唤醒锁**常驻**，这是「随时可连」的硬成本，去掉就等于把上面那个 bug 放回来。
      */
-    private fun acquireKeepAliveLocks() {
-        if (wakeLock == null) {
-            val power = getSystemService(PowerManager::class.java)
-            wakeLock = power?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)?.apply {
-                setReferenceCounted(false)
-                runCatching { acquire() }
-                    .onFailure { Log.w(TAG, "acquire wake lock failed", it) }
-            }
+    private fun acquireWakeLock() {
+        if (wakeLock != null) {
+            return
         }
-        if (wifiLock == null) {
-            val wifi = applicationContext.getSystemService(WifiManager::class.java)
-            @Suppress("DEPRECATION")
-            val lock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WIFI_LOCK_TAG)
-            wifiLock = lock?.apply {
-                setReferenceCounted(false)
-                runCatching { acquire() }
-                    .onFailure { Log.w(TAG, "acquire wifi lock failed", it) }
-            }
+        val power = getSystemService(PowerManager::class.java)
+        wakeLock = power?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)?.apply {
+            setReferenceCounted(false)
+            runCatching { acquire() }
+                .onFailure { Log.w(TAG, "acquire wake lock failed", it) }
         }
+    }
+
+    /**
+     * Wi-Fi 锁**只在真正传画面时持有**。
+     *
+     * WIFI_MODE_FULL_HIGH_PERF 的代价是让 Wi-Fi 芯片彻底不进省电模式，
+     * 待机时实打实地多耗几十到上百毫瓦，是空闲功耗里第二大的固定开销。
+     * 而没有会话时我们只需要「socket 还能收包」——这件事本身不需要高性能 radio：
+     * 唤醒锁已经把 CPU 顶住了，包按 DTIM 周期送到就能立刻处理。
+     *
+     * 所以策略是：建立会话时上锁保证不卡顿，会话结束（延迟一会儿）就放锁。
+     * 万一以后发现某个 ROM 上放锁会导致锁屏后收不到 control-request，
+     * 把 [HOLD_WIFI_LOCK_WHEN_IDLE] 改成 true 就回到旧行为，不需要改别的。
+     */
+    private fun acquireWifiLock() {
+        if (wifiLock != null) {
+            return
+        }
+        val wifi = applicationContext.getSystemService(WifiManager::class.java)
+        @Suppress("DEPRECATION")
+        val lock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WIFI_LOCK_TAG)
+        wifiLock = lock?.apply {
+            setReferenceCounted(false)
+            runCatching { acquire() }
+                .onFailure { Log.w(TAG, "acquire wifi lock failed", it) }
+        }
+        if (wifiLock?.isHeld == true) {
+            FileLog.append("wifi lock acquired")
+        }
+    }
+
+    private fun releaseWifiLock() {
+        if (HOLD_WIFI_LOCK_WHEN_IDLE) {
+            return
+        }
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        if (wifiLock != null) {
+            FileLog.append("wifi lock released")
+        }
+        wifiLock = null
     }
 
     private fun releaseKeepAliveLocks() {
@@ -208,7 +262,11 @@ class RemoteAgentService : Service() {
         capture.release()
         isCaptureAuthorized = false
         isRunning = false
+        if (instance === this) {
+            instance = null
+        }
         releaseKeepAliveLocks()
+        mainHandler.removeCallbacks(enterIdleRunnable)
 
         signalJob?.cancel()
         serviceScope.cancel()
@@ -322,6 +380,9 @@ class RemoteAgentService : Service() {
 
         Log.i(TAG, "creating RTC session")
         startInForeground(withProjection = true)
+        // 会话期间要传画面：撤销待执行的「回空闲档」，并把 Wi-Fi 提到高性能。
+        mainHandler.removeCallbacks(enterIdleRunnable)
+        acquireWifiLock()
         sessionTargetId = controllerDeviceId
         lateinit var session: AgentRtcSession
 
@@ -345,6 +406,8 @@ class RemoteAgentService : Service() {
                     agentSession = null
                     sessionTargetId = null
                     isCaptureAuthorized = capture.isReady()
+                    // 会话结束就回空闲档：停满规格出帧、放掉 Wi-Fi 高性能锁。
+                    scheduleIdle()
                 }
             },
         )
@@ -356,6 +419,11 @@ class RemoteAgentService : Service() {
                 session.close("capture-start-failed")
                 sendSessionError(controllerDeviceId, "CAPTURE_START_FAILED")
             }
+    }
+
+    private fun scheduleIdle() {
+        mainHandler.removeCallbacks(enterIdleRunnable)
+        mainHandler.postDelayed(enterIdleRunnable, IDLE_DELAY_MS)
     }
 
     private fun sendSessionError(controllerDeviceId: String, code: String) {
@@ -468,12 +536,33 @@ class RemoteAgentService : Service() {
         /** 自动重新请求采集授权的最小间隔。 */
         private const val CAPTURE_AUTO_REQUEST_INTERVAL_MS = 120_000L
 
+        /** 会话结束后多久回落到空闲采集档。给「手抖断开马上重连」留缓冲。 */
+        private const val IDLE_DELAY_MS = 15_000L
+
+        /**
+         * 空闲时是否继续持有 Wi-Fi 高性能锁。
+         *
+         * false = 只在会话期间持有（当前策略，省电）。
+         * 若发现某些 ROM 上放锁之后「锁屏状态收不到 control-request」，
+         * 把它改成 true 即可回到旧行为，其余代码不用动。
+         */
+        private const val HOLD_WIFI_LOCK_WHEN_IDLE = false
+
         private const val WAKE_LOCK_TAG = "remotecontrol:agent"
         private const val WIFI_LOCK_TAG = "remotecontrol:wifi"
 
         @Volatile
         var isRunning: Boolean = false
             private set
+
+        @Volatile
+        private var instance: RemoteAgentService? = null
+
+        /** 诊断面板用：当前采集档位（空闲 360x800@1fps / 会话 1080x2400@12fps）。 */
+        fun captureProfileLabel(): String =
+            instance?.let { service ->
+                runCatching { service.capture.profileLabel() }.getOrNull()
+            } ?: "未采集"
 
         @Volatile
         var isCaptureAuthorized: Boolean = false

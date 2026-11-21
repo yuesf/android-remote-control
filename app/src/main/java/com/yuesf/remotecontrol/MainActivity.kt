@@ -429,6 +429,7 @@ class MainActivity : AppCompatActivity() {
             append(" / ack=").append(RemoteAgentService.lastAckResult?.toString() ?: "无")
             append(" / 服务 ").append(service)
             append(" / 采集 ").append(capture)
+            append("（").append(RemoteAgentService.captureProfileLabel()).append("）")
             append(" / 电池 ").append(battery)
             append(" / 悬浮窗 ").append(overlay)
             append(" / 错误 ").append(lastErrorDesc)

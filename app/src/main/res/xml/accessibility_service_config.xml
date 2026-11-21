@@ -8,5 +8,5 @@
     android:canTakeScreenshot="true"
     android:description="@string/accessibility_service_description"
     android:isAccessibilityTool="false"
-    android:notificationTimeout="100"
+    android:notificationTimeout="250"
     android:settingsActivity="com.yuesf.remotecontrol.MainActivity" />

@@ -25,19 +25,22 @@ class SignalingClient(private val listener: Listener) {
     }
 
     /**
-     * 必须自己 ping。
+     * 必须自己 ping，但没必要 ping 得那么勤。
      *
      * 曾经为了省电刻意不设 pingInterval，靠服务端每 60 秒的 ping 保活。
      * 但那只保住了 NAT 映射，保不住「本端还活着」这个判断：socket 被静默掐断
      * （熄屏挂起、切网、运营商回收）后，客户端没有读也没有写，就永远发现不了，
      * 于是一直停在 READY，既不重连也不再处理任何下行消息。
      *
-     * 现在每 25 秒发一次 ping，OkHttp 在一个周期内收不到 pong 就判定连接失效
-     * 并回调 onFailure，重连逻辑才有机会介入。配合服务端的唤醒锁，这点
-     * 射频唤醒代价可以接受——不可达的代价更高。
+     * 之后一度设成 25 秒——这在小流量套餐和待机上都是纯粹的浪费：每发一次 ping
+     * 都会把 Wi-Fi 芯片从省电态拽起来、射频按最大功率发一小段，一天 3456 次。
+     *
+     * 现在设 60 秒，理由是**服务端自己也在每 60 秒 ping 一次**：真断线时服务端会
+     * 先发现并关掉这条连接，客户端随后收到 FIN/RST 就会重连。客户端本端 ping 只是
+     * 「万一服务端也没发现」的兜底，60 秒一次完全够用。
      */
     private val httpClient = OkHttpClient.Builder()
-        .pingInterval(25, TimeUnit.SECONDS)
+        .pingInterval(60, TimeUnit.SECONDS)
         .build()
     private val mainHandler = Handler(Looper.getMainLooper())
 
