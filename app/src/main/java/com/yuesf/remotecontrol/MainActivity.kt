@@ -421,6 +421,14 @@ class MainActivity : AppCompatActivity() {
             ?.let { if (it) "已豁免" else "受限" }
             ?: "未知"
         val overlay = if (Settings.canDrawOverlays(this)) "已开" else "未开"
+        // Doze 是被控端最常见的「莫名离线」原因，直接摆在诊断行上，不用再去翻日志。
+        val powerManager = getSystemService(PowerManager::class.java)
+        val doze = when {
+            powerManager == null -> "未知"
+            powerManager.isDeviceIdleMode -> "深度"
+            else -> "否"
+        }
+        val alarm = if (RemoteAgentService.lastAlarmExact) "精确" else "降级"
         binding.diagnosticsText.text = buildString {
             append("诊断：WS ").append(ws)
             append(" / 界面收到 ").append(signalCount).append(" 条（最后 ").append(lastSignalDesc).append("）")
@@ -431,6 +439,8 @@ class MainActivity : AppCompatActivity() {
             append(" / 采集 ").append(capture)
             append("（").append(RemoteAgentService.captureProfileLabel()).append("）")
             append(" / 电池 ").append(battery)
+            append(" / Doze ").append(doze)
+            append(" / 闹钟 ").append(alarm)
             append(" / 悬浮窗 ").append(overlay)
             append(" / 错误 ").append(lastErrorDesc)
         }

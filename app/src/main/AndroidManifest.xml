@@ -15,6 +15,13 @@
     -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!--
+        Doze 兜底闹钟。拔掉充电线 + 锁屏后系统会挂起 CPU、忽略 wakelock、掐断网络，
+        重连用的 Handler.postDelayed 永远等不到，B 就永久离线。只有
+        setExactAndAllowWhileIdle 能在 Doze 里按时投递，把它叫醒续上连接。
+        没有这个权限时会降级到 setAndAllowWhileIdle（时间会漂但照样能触发）。
+    -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!--
         进程被杀重启后要自动把系统采集授权框拉起来，靠的就是悬浮窗权限：
         Android 10+ 禁止后台启动 Activity，持有它才在豁免名单里。
     -->

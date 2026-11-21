@@ -71,6 +71,14 @@ object SignalingRepository {
         _devices.value = emptyList()
     }
 
+    val isOnline: Boolean
+        get() = client.isOnline
+
+    /** 保活闹钟与网络恢复回调用的兜底重连。 */
+    fun ensureConnected() {
+        client.ensureConnected()
+    }
+
     fun refreshDevices(): Boolean = client.refreshDevices()
 
     fun sendControlRequest(targetDeviceId: String): Boolean =

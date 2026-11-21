@@ -95,6 +95,31 @@ class SignalingClient(private val listener: Listener) {
         notifyState(ConnectionPhase.DISCONNECTED, null)
     }
 
+    /** 供保活机制判断「现在到底连上没有」，不要用 UI 层的 phase，那个会被各种事件染色。 */
+    val isOnline: Boolean
+        get() = online && !manuallyClosed
+
+    /**
+     * 兜底重连：不管当前处于什么状态，只要不是用户手动断开，就确保在连。
+     *
+     * 为什么需要它：重连是靠 [mainHandler] 的 `postDelayed` 排的，而 Doze 会挂起 CPU，
+     * 回调根本不执行。拔掉充电线、锁屏、静置几分钟后，socket 被系统回收，
+     * 这个 Handler 里的重试永远等不到——于是 B 端「不在线」，而且自己永远不会恢复。
+     * 现在由 `AlarmManager.setExactAndAllowWhileIdle` 定时把服务叫醒，调这里续上。
+     */
+    @Synchronized
+    fun ensureConnected() {
+        val activeConfig = config ?: return
+        if (manuallyClosed) {
+            return
+        }
+        if (online) {
+            return
+        }
+        FileLog.append("ensureConnected: reconnect (attempt=$reconnectAttempt)")
+        connect(activeConfig)
+    }
+
     fun refreshDevices(): Boolean = sendJson(JSONObject().put("type", "list_devices"))
 
     fun sendControlRequest(targetDeviceId: String): Boolean =

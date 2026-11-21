@@ -1,5 +1,6 @@
 package com.yuesf.remotecontrol.agent
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,6 +9,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
@@ -52,6 +55,7 @@ class RemoteAgentService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -86,6 +90,8 @@ class RemoteAgentService : Service() {
         if (HOLD_WIFI_LOCK_WHEN_IDLE) {
             acquireWifiLock()
         }
+        scheduleKeepAliveAlarm()
+        registerNetworkMonitor()
         Log.i(TAG, "service created, subscribing signals")
         // 系统层终止投屏时，把当前会话收掉，但服务继续在线等待下一次连接。
         capture.onProjectionStopped = {
@@ -114,6 +120,27 @@ class RemoteAgentService : Service() {
         if (intent?.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        // 保活闹钟唤醒。服务若已在前台，这里只做「续连接」这件事：
+        // 重复走一遍 startForeground 在 Android 12+ 的后台启动限制下并不总是被允许，
+        // 而连接本身只需要 ensureConnected，没必要付那个风险。
+        if (intent?.action == ACTION_KEEP_ALIVE) {
+            FileLog.append(
+                "alarm fired online=${SignalingRepository.isOnline} running=$isRunning",
+            )
+            if (isRunning) {
+                acquireWakeLock()
+                if (HOLD_WIFI_LOCK_WHEN_IDLE) {
+                    acquireWifiLock()
+                }
+                runCatching { SignalingRepository.ensureConnected() }
+                    .onFailure { FileLog.append("alarm reconnect failed: ${it.javaClass.simpleName}") }
+                maybeAutoRequestCapture()
+                scheduleKeepAliveAlarm()
+                return START_STICKY
+            }
+            // 服务曾被系统回收：落到下面的正常流程把自己重新拉起来。
         }
 
         val projectionData = extractProjectionData(intent)
@@ -164,6 +191,10 @@ class RemoteAgentService : Service() {
      * 都得不到响应——A 端表现为「连不上」，而在 B 上看不出任何异常。
      *
      * 所以唤醒锁**常驻**，这是「随时可连」的硬成本，去掉就等于把上面那个 bug 放回来。
+     *
+     * 但要注意：进入 Doze 之后系统会**忽略 wakelock**，这把锁届时是失效的。
+     * 真正在 Doze 里保命的是 `scheduleKeepAliveAlarm()` 那个精确闹钟，
+     * 以及电池优化白名单。两者缺一，拔掉充电线锁屏半小时就会离线。
      */
     private fun acquireWakeLock() {
         if (wakeLock != null) {
@@ -178,24 +209,26 @@ class RemoteAgentService : Service() {
     }
 
     /**
-     * Wi-Fi 锁**只在真正传画面时持有**。
+     * Wi-Fi 锁：**常驻持有**，用 LOW_LATENCY 而不是 HIGH_PERF。
      *
-     * WIFI_MODE_FULL_HIGH_PERF 的代价是让 Wi-Fi 芯片彻底不进省电模式，
-     * 待机时实打实地多耗几十到上百毫瓦，是空闲功耗里第二大的固定开销。
-     * 而没有会话时我们只需要「socket 还能收包」——这件事本身不需要高性能 radio：
-     * 唤醒锁已经把 CPU 顶住了，包按 DTIM 周期送到就能立刻处理。
+     * 上一版为了省电改成「只在会话期间持有」，结果在「拔充电线 + 锁屏」场景下
+     * 射频按 DTIM 周期深度休眠，长连接更容易被判死。离线是功能故障，
+     * 比多耗几十毫瓦严重得多，所以恢复常驻。
      *
-     * 所以策略是：建立会话时上锁保证不卡顿，会话结束（延迟一会儿）就放锁。
-     * 万一以后发现某个 ROM 上放锁会导致锁屏后收不到 control-request，
-     * 把 [HOLD_WIFI_LOCK_WHEN_IDLE] 改成 true 就回到旧行为，不需要改别的。
+     * 模式选 LOW_LATENCY（API 29+）：它只承诺「保低延迟」，不像 HIGH_PERF 那样
+     * 强制 radio 全速运行，在同样能维持长连接的前提下功耗更低。
+     * 需要进一步省电可以把 [HOLD_WIFI_LOCK_WHEN_IDLE] 改回 false，
+     * 代价是接受偶尔离线。
      */
     private fun acquireWifiLock() {
         if (wifiLock != null) {
             return
         }
         val wifi = applicationContext.getSystemService(WifiManager::class.java)
-        @Suppress("DEPRECATION")
-        val lock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WIFI_LOCK_TAG)
+        // LOW_LATENCY 从 API 29 开始有，语义正是「实时应用要保低延迟」，
+        // 比 HIGH_PERF 少一层「强制 radio 全速」的浪费，minSdk 恰好是 29。
+        val mode = WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+        val lock = wifi?.createWifiLock(mode, WIFI_LOCK_TAG)
         wifiLock = lock?.apply {
             setReferenceCounted(false)
             runCatching { acquire() }
@@ -222,6 +255,109 @@ class RemoteAgentService : Service() {
         runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
         wakeLock = null
         wifiLock = null
+    }
+
+    /**
+     * Doze 兜底唤醒闹钟。
+     *
+     * 这是「拔掉充电线 + 锁屏」场景下唯一的救命机制。
+     *
+     * Doze 一旦生效，系统同时做三件事：挂起 CPU、**忽略应用持有的 wakelock**、掐断后台网络。
+     * 于是 WebSocket 断了，而重连是靠 `mainHandler.postDelayed` 排的，CPU 挂着回调永远不执行——
+     * 服务看着还活着，实际既不连也不重连，A 端看到的就是「B 不在线」，
+     * 而且只要不碰它，永远不会自己好。
+     *
+     * `setExactAndAllowWhileIdle` 是 Doze 里仍会按约定时间投递的少数通道之一，
+     * 投递时会短暂解除空闲限制（对已进电池白名单的应用，这段时间网络是通的），
+     * 正好够把连接续上。Doze 对该接口限流：同一应用最快 9 分钟一次，所以间隔取 10 分钟。
+     *
+     * 没有精确闹钟权限时降级到 `setAndAllowWhileIdle`：时间会漂，但 Doze 里照样能触发。
+     */
+    private fun scheduleKeepAliveAlarm() {
+        val alarmManager = getSystemService(AlarmManager::class.java)
+        if (alarmManager == null) {
+            FileLog.append("alarm: AlarmManager unavailable")
+            return
+        }
+        val pending = PendingIntent.getService(
+            this,
+            REQUEST_KEEP_ALIVE,
+            Intent(this, RemoteAgentService::class.java).setAction(ACTION_KEEP_ALIVE),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val triggerAt = SystemClock.elapsedRealtime() + KEEP_ALIVE_ALARM_INTERVAL_MS
+        val exact = runCatching {
+            val canBeExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                alarmManager.canScheduleExactAlarms()
+            if (canBeExact) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerAt,
+                    pending,
+                )
+            } else {
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerAt,
+                    pending,
+                )
+            }
+            canBeExact
+        }.getOrElse { error ->
+            FileLog.append("alarm schedule failed: ${error.javaClass.simpleName}")
+            false
+        }
+        lastAlarmExact = exact
+        FileLog.append("alarm +${KEEP_ALIVE_ALARM_INTERVAL_MS / 60_000}min exact=$exact")
+    }
+
+    private fun cancelKeepAliveAlarm() {
+        val alarmManager = getSystemService(AlarmManager::class.java) ?: return
+        val pending = PendingIntent.getService(
+            this,
+            REQUEST_KEEP_ALIVE,
+            Intent(this, RemoteAgentService::class.java).setAction(ACTION_KEEP_ALIVE),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        runCatching { alarmManager.cancel(pending) }
+        pending.cancel()
+    }
+
+    /**
+     * 网络状态监听：网络一恢复就立刻重连，不用等下一个 10 分钟闹钟。
+     *
+     * 典型场景是 Doze 退出、Wi-Fi 重新关联、飞行模式关掉。少了这个回调，
+     * 短时间的断网恢复要白等一整轮闹钟周期。
+     */
+    private fun registerNetworkMonitor() {
+        if (networkCallback != null) {
+            return
+        }
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                FileLog.append("network available -> ensureConnected")
+                runCatching { SignalingRepository.ensureConnected() }
+            }
+
+            override fun onLost(network: Network) {
+                FileLog.append("network lost")
+            }
+        }
+        networkCallback = callback
+        runCatching { manager.registerDefaultNetworkCallback(callback) }
+            .onFailure {
+                networkCallback = null
+                FileLog.append("network callback failed: ${it.javaClass.simpleName}")
+            }
+    }
+
+    private fun unregisterNetworkMonitor() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        runCatching {
+            getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
+        }
     }
 
     /**
@@ -266,6 +402,8 @@ class RemoteAgentService : Service() {
             instance = null
         }
         releaseKeepAliveLocks()
+        cancelKeepAliveAlarm()
+        unregisterNetworkMonitor()
         mainHandler.removeCallbacks(enterIdleRunnable)
 
         signalJob?.cancel()
@@ -532,6 +670,17 @@ class RemoteAgentService : Service() {
         private const val EXTRA_PROJECTION_DATA = "projection_data"
         const val ACTION_START = "com.yuesf.remotecontrol.agent.START"
         const val ACTION_STOP = "com.yuesf.remotecontrol.agent.STOP"
+        const val ACTION_KEEP_ALIVE = "com.yuesf.remotecontrol.agent.KEEP_ALIVE"
+        private const val REQUEST_KEEP_ALIVE = 4202
+
+        /**
+         * Doze 兜底闹钟周期。
+         *
+         * Doze 对 `setExactAndAllowWhileIdle` 的限流下限是 9 分钟一次，
+         * 取 10 分钟留一点余量，避免被系统判为超频而顺延。
+         * 这是「电池白名单之外还兜了一层」的保险，不是主链路。
+         */
+        private const val KEEP_ALIVE_ALARM_INTERVAL_MS = 10 * 60 * 1000L
 
         /** 自动重新请求采集授权的最小间隔。 */
         private const val CAPTURE_AUTO_REQUEST_INTERVAL_MS = 120_000L
@@ -540,13 +689,14 @@ class RemoteAgentService : Service() {
         private const val IDLE_DELAY_MS = 15_000L
 
         /**
-         * 空闲时是否继续持有 Wi-Fi 高性能锁。
+         * 空闲时是否继续持有 Wi-Fi 锁。
          *
-         * false = 只在会话期间持有（当前策略，省电）。
-         * 若发现某些 ROM 上放锁之后「锁屏状态收不到 control-request」，
-         * 把它改成 true 即可回到旧行为，其余代码不用动。
+         * 曾经为了省电改成 false（只在会话期间持有），代价是拔掉充电线 + 锁屏后
+         * 射频按 DTIM 周期休眠，长连接更容易被判死。离线属于功能故障，
+         * 比多耗几十毫瓦严重，所以恢复成**常驻**，但模式从 HIGH_PERF 换成更温和的
+         * LOW_LATENCY（API 29+）：保低延迟、不强制 radio 全速。
          */
-        private const val HOLD_WIFI_LOCK_WHEN_IDLE = false
+        private const val HOLD_WIFI_LOCK_WHEN_IDLE = true
 
         private const val WAKE_LOCK_TAG = "remotecontrol:agent"
         private const val WIFI_LOCK_TAG = "remotecontrol:wifi"
@@ -554,6 +704,10 @@ class RemoteAgentService : Service() {
         @Volatile
         var isRunning: Boolean = false
             private set
+
+        /** 诊断用：保活闹钟是否拿到了精确闹钟权限（false 表示降级为 Doze 下会漂的版本）。 */
+        @Volatile
+        var lastAlarmExact: Boolean = false
 
         @Volatile
         private var instance: RemoteAgentService? = null
