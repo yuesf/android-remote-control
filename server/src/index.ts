@@ -54,6 +54,8 @@ async function shutdown(signalName: string): Promise<void> {
   await signaling.close();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
+    // 残留的 HTTP keep-alive 空闲连接同样会挡住 close 回调。
+    server.closeIdleConnections?.();
   });
   clearTimeout(forceExitTimer);
   logger.info("Shutdown complete");

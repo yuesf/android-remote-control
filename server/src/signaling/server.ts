@@ -13,6 +13,9 @@ interface AttachedSignalingServer {
 
 type HeartbeatSocket = WebSocket & { isAlive?: boolean };
 
+/** ws 的 readyState 常量：WebSocket 只是类型导入，取不到静态属性。 */
+const WS_CLOSED = 3;
+
 export function attachSignalingServer(
   server: Server,
   config: AppConfig,
@@ -80,6 +83,14 @@ export function attachSignalingServer(
       server.off("upgrade", handleUpgrade);
       for (const client of webSocketServer.clients) {
         client.close(1001, "Server shutting down");
+        // ws 的 close 是握手式的：对端不回 close 帧，连接就一直挂着，
+        // webSocketServer.close() 的回调永远不会触发，整个进程只能等
+        // systemd 超时强杀。这里给一个短兜底，超时直接掐断 TCP。
+        setTimeout(() => {
+          if (client.readyState !== WS_CLOSED) {
+            client.terminate();
+          }
+        }, 1_000).unref();
       }
       await new Promise<void>((resolve) => webSocketServer.close(() => resolve()));
     },
