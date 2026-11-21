@@ -465,20 +465,26 @@ class MainActivity : AppCompatActivity() {
             else -> "否"
         }
         val alarm = if (RemoteAgentService.lastAlarmExact) "精确" else "降级"
+        // 只显示当前角色真正相关的项。
+        // 控制端没有服务、不采集屏幕、也不需要保活闹钟，把这些项摆上去全是「未启动/未授权/降级」，
+        // 看上去像一堆故障，反而把真正要看的「WS 在线」「界面收到几条」淹掉了。
+        val isAgent = currentRoleOrNull() == DeviceRole.AGENT
         binding.diagnosticsText.text = buildString {
             append("诊断：WS ").append(ws)
             append(" / 界面收到 ").append(signalCount).append(" 条（最后 ").append(lastSignalDesc).append("）")
-            append(" / 服务收到 ").append(RemoteAgentService.receivedSignals)
-            append(" 条（").append(RemoteAgentService.lastSignalKind).append("）")
-            append(" / ack=").append(RemoteAgentService.lastAckResult?.toString() ?: "无")
-            append(" / 服务 ").append(service)
-            append(" / 采集 ").append(capture)
-            append("（").append(RemoteAgentService.captureProfileLabel()).append("）")
-            append(" / 电池 ").append(battery)
-            append(" / Doze ").append(doze)
-            append(" / Wi-Fi锁 ").append(RemoteAgentService.wifiLockLabel())
-            append(" / 闹钟 ").append(alarm)
-            append(" / 悬浮窗 ").append(overlay)
+            if (isAgent) {
+                append(" / 服务收到 ").append(RemoteAgentService.receivedSignals)
+                append(" 条（").append(RemoteAgentService.lastSignalKind).append("）")
+                append(" / ack=").append(RemoteAgentService.lastAckResult?.toString() ?: "无")
+                append(" / 服务 ").append(service)
+                append(" / 采集 ").append(capture)
+                append("（").append(RemoteAgentService.captureProfileLabel()).append("）")
+                append(" / 电池 ").append(battery)
+                append(" / Doze ").append(doze)
+                append(" / Wi-Fi锁 ").append(RemoteAgentService.wifiLockLabel())
+                append(" / 闹钟 ").append(alarm)
+                append(" / 悬浮窗 ").append(overlay)
+            }
             append(" / 错误 ").append(lastErrorDesc)
         }
     }
@@ -647,6 +653,9 @@ class MainActivity : AppCompatActivity() {
         if (state.phase == ConnectionPhase.ONLINE && currentRoleOrNull() == DeviceRole.CONTROLLER) {
             SignalingRepository.refreshDevices()
         }
+        // 诊断行必须跟着连接状态刷新。之前只在「收到信号/报错」时重绘，
+        // 于是重连成功后仍停在「WS 重连中」，把正常状态显示成故障。
+        renderDiagnostics()
         renderRole()
     }
 
