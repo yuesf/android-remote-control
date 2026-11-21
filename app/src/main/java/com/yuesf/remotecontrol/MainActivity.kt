@@ -37,11 +37,18 @@ import com.yuesf.remotecontrol.signaling.SignalingRepository
 import com.yuesf.remotecontrol.signaling.SignalingState
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var preferences: AppPreferences
     private var suppressRoleCallback = false
+
+    private var signalCount = 0
+    private var lastSignalDesc = "无"
+    private var lastErrorDesc = "无"
 
     /**
      * 运行在双开空间/应用分身时置位：此时不初始化界面绑定，
@@ -126,6 +133,7 @@ class MainActivity : AppCompatActivity() {
         if (spaceBlocked) {
             return
         }
+        renderDiagnostics()
         renderRole()
         renderAccessibilityStatus()
         if (currentRoleOrNull() == DeviceRole.CONTROLLER &&
@@ -312,9 +320,48 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     SignalingRepository.devices.collect(::renderDevices)
                 }
+                // 现场诊断：某些机型（如荣耀）把 logcat 关了，拿不到任何日志，
+                // 只能在界面上把「有没有收到信号」这层事实直接摆出来。
+                launch {
+                    SignalingRepository.signals.collect { signal ->
+                        signalCount += 1
+                        lastSignalDesc = "${signal.payload.optString("kind")} @ ${timeLabel()}"
+                        renderDiagnostics()
+                    }
+                }
+                launch {
+                    SignalingRepository.errors.collect { error ->
+                        lastErrorDesc = error.code
+                        renderDiagnostics()
+                    }
+                }
             }
         }
     }
+
+    private fun renderDiagnostics() {
+        val ws = when (SignalingRepository.state.value.phase) {
+            ConnectionPhase.ONLINE -> "在线"
+            ConnectionPhase.CONNECTING -> "连接中"
+            ConnectionPhase.RECONNECTING -> "重连中"
+            ConnectionPhase.ERROR -> "错误"
+            else -> "未连接"
+        }
+        val service = if (RemoteAgentService.isRunning) "运行中" else "未启动"
+        val capture = if (RemoteAgentService.isCaptureAuthorized) "就绪" else "未授权"
+        binding.diagnosticsText.text = buildString {
+            append("诊断：WS ").append(ws)
+            append(" / 界面收到 ").append(signalCount).append(" 条（最后 ").append(lastSignalDesc).append("）")
+            append(" / 服务收到 ").append(RemoteAgentService.receivedSignals)
+            append(" 条（").append(RemoteAgentService.lastSignalKind).append("）")
+            append(" / ack=").append(RemoteAgentService.lastAckResult?.toString() ?: "无")
+            append(" / 服务 ").append(service)
+            append(" / 采集 ").append(capture)
+            append(" / 错误 ").append(lastErrorDesc)
+        }
+    }
+
+    private fun timeLabel(): String = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
 
     private fun saveAndApply() {
         val config = persistForm() ?: return

@@ -347,6 +347,16 @@
         </com.google.android.material.card.MaterialCardView>
 
         <TextView
+            android:id="@+id/diagnosticsText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:textColor="#5F5E5A"
+            android:textIsSelectable="true"
+            android:textSize="12sp"
+            tools:text="诊断：WS 在线 / 信号 0 条 / 服务 运行中 / 采集 就绪" />
+
+        <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"

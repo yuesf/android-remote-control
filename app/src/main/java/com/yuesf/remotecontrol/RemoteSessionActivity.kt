@@ -28,6 +28,7 @@ class RemoteSessionActivity : AppCompatActivity() {
     private lateinit var session: ControllerRtcSession
 
     private var requestSent = false
+    private var ackReceived = false
     private var offerReceived = false
     private var targetSeenOnline = false
     private var downX = 0f
@@ -39,10 +40,24 @@ class RemoteSessionActivity : AppCompatActivity() {
     /**
      * 请求发出后对方可能一直不响应（B 端服务在、但无障碍没开或屏幕采集未授权，
      * 甚至 B 端进程被系统冻结）。没有这个超时，界面会永远停在“等待中”。
+     *
+     * 有没有收到 [control-ack] 是两条完全不同的故障线，提示必须分开：
+     * 没收到握手 = B 应用层没处理（没运行 / 被冻结 / 版本不对）；
+     * 收到握手却没 offer = B 在处理，但建立画面的前置条件不满足。
      */
     private val requestTimeout = Runnable {
-        if (!offerReceived && !isFinishing) {
-            binding.sessionStatus.setText(R.string.remote_session_no_response)
+        if (offerReceived || isFinishing) {
+            return@Runnable
+        }
+        binding.sessionStatus.setText(
+            if (ackReceived) R.string.remote_session_no_response else R.string.remote_session_no_ack,
+        )
+    }
+
+    /** 握手 6 秒还没回来，就先把「B 没收到」这个判断摆出来，不用干等 20 秒。 */
+    private val ackTimeout = Runnable {
+        if (!ackReceived && !offerReceived && !isFinishing) {
+            binding.sessionStatus.setText(R.string.remote_session_no_ack)
         }
     }
 
@@ -80,6 +95,7 @@ class RemoteSessionActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        timeoutHandler.removeCallbacks(ackTimeout)
         timeoutHandler.removeCallbacks(requestTimeout)
         if (::session.isInitialized) {
             if (requestSent) {
@@ -184,14 +200,42 @@ class RemoteSessionActivity : AppCompatActivity() {
                         // 单条信号解析失败不能终止整条订阅，否则会话界面会永久失联。
                         runCatching { session.handleSignal(signal.payload) }
                         when (signal.payload.optString("kind")) {
-                            "webrtc-offer" -> {
-                                offerReceived = true
-                                timeoutHandler.removeCallbacks(requestTimeout)
-                                binding.sessionStatus.setText(R.string.remote_session_connected)
+                            "control-ack" -> {
+                                ackReceived = true
+                                timeoutHandler.removeCallbacks(ackTimeout)
+                                if (!offerReceived) {
+                                    binding.sessionStatus.setText(R.string.remote_session_acked)
+                                }
                             }
 
-                            "session-error", "session-ended" ->
+                            "webrtc-offer" -> {
+                                offerReceived = true
+                                timeoutHandler.removeCallbacks(ackTimeout)
                                 timeoutHandler.removeCallbacks(requestTimeout)
+                                // 收到 SDP 只代表对方应答了，不代表媒体通道通了；
+                                // 真正「已连接」要等 ICE 完成或首帧到达。
+                                binding.sessionStatus.setText(R.string.remote_session_waiting_media)
+                            }
+
+                            "session-error" -> {
+                                timeoutHandler.removeCallbacks(ackTimeout)
+                                timeoutHandler.removeCallbacks(requestTimeout)
+                                val code = signal.payload.optString("code")
+                                binding.sessionStatus.text = getString(
+                                    when (code) {
+                                        "ACCESSIBILITY_NOT_ENABLED" -> R.string.remote_session_err_accessibility
+                                        "CAPTURE_AUTH_REQUIRED" -> R.string.remote_session_err_capture
+                                        "DEVICE_BUSY" -> R.string.remote_session_err_busy
+                                        else -> R.string.remote_session_error
+                                    },
+                                    code,
+                                )
+                            }
+
+                            "session-ended" -> {
+                                timeoutHandler.removeCallbacks(ackTimeout)
+                                timeoutHandler.removeCallbacks(requestTimeout)
+                            }
                         }
                     }
                 }
@@ -206,6 +250,7 @@ class RemoteSessionActivity : AppCompatActivity() {
         requestSent = SignalingRepository.sendControlRequest(targetDeviceId)
         if (requestSent) {
             binding.sessionStatus.setText(R.string.remote_session_waiting_offer)
+            timeoutHandler.postDelayed(ackTimeout, ACK_TIMEOUT_MS)
             timeoutHandler.postDelayed(requestTimeout, REQUEST_TIMEOUT_MS)
         } else {
             binding.sessionStatus.setText(R.string.remote_session_waiting_signaling)
@@ -309,5 +354,8 @@ class RemoteSessionActivity : AppCompatActivity() {
 
         /** 等待 B 返回 offer 的上限。超过这个时间基本可以判定对方没有在处理请求。 */
         private const val REQUEST_TIMEOUT_MS = 20_000L
+
+        /** 握手回执的上限。超过它基本可以判定 B 端的应用层根本没在处理消息。 */
+        private const val ACK_TIMEOUT_MS = 6_000L
     }
 }

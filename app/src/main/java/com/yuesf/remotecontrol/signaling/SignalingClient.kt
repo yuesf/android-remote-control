@@ -2,6 +2,7 @@ package com.yuesf.remotecontrol.signaling
 
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.yuesf.remotecontrol.data.DeviceRole
 import com.yuesf.remotecontrol.data.SignalingConfig
 import okhttp3.OkHttpClient
@@ -224,6 +225,48 @@ class SignalingClient(private val listener: Listener) {
     private inner class WebSocketSession(
         private val expectedGeneration: Int,
     ) : WebSocketListener() {
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            if (expectedGeneration != generation) {
+                Log.d(TAG, "drop stale message, gen=$expectedGeneration current=$generation")
+                return
+            }
+
+            val message = runCatching { JSONObject(text) }.getOrNull() ?: return
+            val type = message.optString("type")
+            when (type) {
+                "ready" -> {
+                    online = true
+                    reconnectAttempt = 0
+                    dispatchIceServers(message.optJSONArray("iceServers"))
+                    Log.i(TAG, "ready: registered as ${message.optString("deviceId")}")
+                    notifyState(ConnectionPhase.ONLINE, message.optString("deviceId"))
+                }
+
+                "devices" -> {
+                    Log.d(TAG, "devices: ${message.optJSONArray("devices")?.length() ?: 0} 台")
+                    dispatchDevices(message)
+                }
+
+                "signal" -> {
+                    val payloadObj = message.optJSONObject("payload")
+                    Log.i(
+                        TAG,
+                        "signal in: kind=${payloadObj?.optString("kind")} from=${message.optString("fromDeviceId")}",
+                    )
+                    dispatchSignal(message)
+                }
+
+                "error" -> {
+                    val code = message.optString("code", "SERVER_ERROR")
+                    val detail = message.optString("message", "Signaling server rejected the request")
+                    Log.w(TAG, "server error: $code $detail")
+                    mainHandler.post { listener.onServerError(code, detail) }
+                }
+
+                else -> Log.d(TAG, "ignored message type=$type")
+            }
+        }
+
         override fun onOpen(webSocket: WebSocket, response: Response) {
             if (expectedGeneration != generation || manuallyClosed) {
                 webSocket.close(1000, "Stale connection")
@@ -231,6 +274,7 @@ class SignalingClient(private val listener: Listener) {
             }
 
             val activeConfig = config ?: return
+            Log.i(TAG, "ws open, register as ${activeConfig.role.wireValue}/${activeConfig.deviceName}")
             val register = JSONObject()
                 .put("type", "register")
                 .put("deviceId", activeConfig.deviceId)
@@ -239,33 +283,13 @@ class SignalingClient(private val listener: Listener) {
             webSocket.send(register.toString())
         }
 
-        override fun onMessage(webSocket: WebSocket, text: String) {
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            Log.w(TAG, "ws closed: code=$code reason=$reason gen=$expectedGeneration/$generation")
+            // 必须先校验 generation：被替换掉的那条旧连接同样会收到 4001，
+            // 如果不判断就会把当前这条新连接也标记成「手动关闭」，从此不再重连。
             if (expectedGeneration != generation) {
                 return
             }
-
-            val message = runCatching { JSONObject(text) }.getOrNull() ?: return
-            when (message.optString("type")) {
-                "ready" -> {
-                    online = true
-                    reconnectAttempt = 0
-                    dispatchIceServers(message.optJSONArray("iceServers"))
-                    notifyState(ConnectionPhase.ONLINE, message.optString("deviceId"))
-                }
-
-                "devices" -> dispatchDevices(message)
-
-                "signal" -> dispatchSignal(message)
-
-                "error" -> {
-                    val code = message.optString("code", "SERVER_ERROR")
-                    val detail = message.optString("message", "Signaling server rejected the request")
-                    mainHandler.post { listener.onServerError(code, detail) }
-                }
-            }
-        }
-
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             if (code == CLOSE_DEVICE_REPLACED) {
                 manuallyClosed = true
                 notifyState(ConnectionPhase.ERROR, "此设备已被另一个连接替换")
@@ -280,11 +304,13 @@ class SignalingClient(private val listener: Listener) {
                 !t.message.isNullOrBlank() -> t.message
                 else -> "无法连接信令服务器"
             }
+            Log.w(TAG, "ws failure: $detail gen=$expectedGeneration/$generation", t)
             handleDisconnect(expectedGeneration, detail)
         }
     }
 
     companion object {
+        private const val TAG = "SignalingClient"
         private const val CLOSE_DEVICE_REPLACED = 4001
     }
 }

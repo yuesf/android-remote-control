@@ -1,8 +1,6 @@
 package com.yuesf.remotecontrol.webrtc
 
 import android.content.Context
-import android.content.Intent
-import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
@@ -16,20 +14,14 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.RtpReceiver
-import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
-import org.webrtc.SurfaceTextureHelper
-import org.webrtc.VideoCapturer
-import org.webrtc.VideoSource
-import org.webrtc.VideoTrack
 import java.nio.ByteBuffer
 import kotlin.math.abs
-import kotlin.math.min
 
 class AgentRtcSession(
     context: Context,
-    private val projectionData: Intent,
+    private val capture: ScreenCaptureHolder,
     private val onLocalSignal: (JSONObject) -> Unit,
     private val onStatus: (String) -> Unit,
     private val onSessionClosed: (String) -> Unit,
@@ -38,10 +30,6 @@ class AgentRtcSession(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var peerConnection: PeerConnection? = null
-    private var videoCapturer: VideoCapturer? = null
-    private var videoSource: VideoSource? = null
-    private var videoTrack: VideoTrack? = null
-    private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var controlChannel: DataChannel? = null
 
     private var captureWidth = 720
@@ -53,43 +41,20 @@ class AgentRtcSession(
     @Volatile
     private var closed = false
 
-    private val projectionCallback = object : MediaProjection.Callback() {
-        override fun onStop() {
-            mainHandler.post {
-                if (!closed) {
-                    close("screen-capture-stopped")
-                }
-            }
-        }
-    }
-
     fun start() {
         try {
             WebRtcEngine.initialize(appContext)
             WebRtcEngine.setIceServers(SignalingRepository.iceServers)
-            val dimensions = captureSize()
+            val track = capture.videoTrack()
+                ?: error("screen capture is not prepared")
+            val dimensions = capture.dimensions()
             captureWidth = dimensions.first
             captureHeight = dimensions.second
 
             val peer = WebRtcEngine.createPeerConnection(peerObserver).also { peerConnection = it }
-
-            val capturer = ScreenCapturerAndroid(projectionData, projectionCallback)
-            val textureHelper = SurfaceTextureHelper.create(
-                "ScreenCapture",
-                WebRtcEngine.eglBase.eglBaseContext,
-            )
-            val source = WebRtcEngine.createVideoSource(true)
-            val track = WebRtcEngine.createVideoTrack("screen0", source)
-
-            capturer.initialize(textureHelper, appContext, source.capturerObserver)
             peer.addTrack(track, listOf("screen"))
-
-            videoCapturer = capturer
-            surfaceTextureHelper = textureHelper
-            videoSource = source
-            videoTrack = track
-
-            capturer.startCapture(captureWidth, captureHeight, CAPTURE_FRAMES_PER_SECOND)
+            // 采集管线是常驻的，这里只是开始出帧；停会话时只停采集，不销毁管线。
+            capture.startCapture()
 
             val channel = peer.createDataChannel("control", DataChannel.Init().apply { ordered = true })
             channel?.registerObserver(dataChannelObserver)
@@ -155,19 +120,9 @@ class AgentRtcSession(
         }
         peerConnection = null
 
-        runCatching { videoTrack?.dispose() }
-        videoTrack = null
-
-        runCatching { videoCapturer?.stopCapture() }
-        runCatching { videoCapturer?.dispose() }
-        videoCapturer = null
-
-        runCatching { videoSource?.dispose() }
-        videoSource = null
-
-        runCatching { surfaceTextureHelper?.dispose() }
-        surfaceTextureHelper = null
-
+        // 采集管线常驻：这里不停采集，也不销毁投影。
+        // Android 14 一旦释放全部虚拟屏就会终止投影，下次连接又得让用户重新授权。
+        pendingRemoteCandidates.clear()
         offerPayload = null
         onStatus("closed:$reason")
         onSessionClosed(reason)
@@ -333,18 +288,5 @@ class AgentRtcSession(
         @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(metrics)
         return metrics.widthPixels to metrics.heightPixels
-    }
-
-    private fun captureSize(): Pair<Int, Int> {
-        val (displayWidth, displayHeight) = displaySize()
-        val scale = min(1f, MAX_CAPTURE_DIMENSION / maxOf(displayWidth, displayHeight).toFloat())
-        val width = ((displayWidth * scale).toInt() and -2).coerceAtLeast(2)
-        val height = ((displayHeight * scale).toInt() and -2).coerceAtLeast(2)
-        return width to height
-    }
-
-    companion object {
-        private const val CAPTURE_FRAMES_PER_SECOND = 15
-        private const val MAX_CAPTURE_DIMENSION = 1280f
     }
 }

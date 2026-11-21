@@ -69,7 +69,13 @@
     <string name="remote_session_waiting_signaling">信令未就绪，正在等待连接…</string>
     <string name="remote_session_target_offline">对方设备已离线，请确认 B 端已启动被控服务</string>
     <string name="remote_session_no_response">对方无响应：请确认 B 端无障碍已开启、屏幕采集已授权</string>
+    <string name="remote_session_acked">B 已收到请求，正在准备画面…</string>
+    <string name="remote_session_no_ack">B 没有回应握手：B 端应用可能未在运行，或被系统限制后台</string>
+    <string name="remote_session_err_accessibility">B 端无障碍服务未开启，无法接收操作</string>
+    <string name="remote_session_err_capture">B 端未授权屏幕采集，无法建立画面</string>
+    <string name="remote_session_err_busy">B 端正被其他设备控制</string>
     <string name="remote_session_connected">已连接</string>
+    <string name="remote_session_waiting_media">对方已返回画面，正在打通媒体通道…</string>
     <string name="remote_session_closed">连接已断开</string>
     <string name="remote_session_error">连接失败：%1$s</string>
     <string name="close_session">关闭</string>

@@ -23,6 +23,7 @@ import com.yuesf.remotecontrol.data.SpaceGuard
 import com.yuesf.remotecontrol.signaling.RemoteSignal
 import com.yuesf.remotecontrol.signaling.SignalingRepository
 import com.yuesf.remotecontrol.webrtc.AgentRtcSession
+import com.yuesf.remotecontrol.webrtc.ScreenCaptureHolder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,10 +34,10 @@ import org.json.JSONObject
 
 class RemoteAgentService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val capture = ScreenCaptureHolder()
     private var signalJob: Job? = null
     private var agentSession: AgentRtcSession? = null
     private var sessionTargetId: String? = null
-    private var pendingProjectionData: Intent? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -48,6 +49,14 @@ class RemoteAgentService : Service() {
         }
         createNotificationChannel()
         isRunning = true
+        Log.i(TAG, "service created, subscribing signals")
+        // 系统层终止投屏时，把当前会话收掉，但服务继续在线等待下一次连接。
+        capture.onProjectionStopped = {
+            serviceScope.launch {
+                isCaptureAuthorized = false
+                agentSession?.close("screen-capture-stopped")
+            }
+        }
         signalJob = serviceScope.launch {
             // 单个信号处理失败不能让整条订阅终止：collect 里抛异常会结束这个协程，
             // 之后再也不会收到任何信号，表现就是「在线但收到请求毫无反应」，
@@ -70,12 +79,26 @@ class RemoteAgentService : Service() {
             return START_NOT_STICKY
         }
 
-        extractProjectionData(intent)?.let { projectionData ->
-            pendingProjectionData = projectionData
-            isCaptureAuthorized = true
-        }
+        val projectionData = extractProjectionData(intent)
 
-        startInForeground(pendingProjectionData != null)
+        // Android 14 起：必须先以 FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION 进入前台，
+        // 才允许调用 getMediaProjection。顺序反了会被系统立刻终止投影
+        // （表现为刚授权完就变成“未授权”，且没有任何异常）。
+        if (projectionData == null) {
+            startInForeground(capture.isReady())
+        }
+        if (projectionData != null) {
+            startInForeground(withProjection = true)
+            // 授权凭证只能使用一次（Android 14 起强制），所以这里立刻把采集管线建好常驻，
+            // 之后每次会话都复用同一个 VideoTrack，不再要求用户重复授权。
+            if (capture.prepare(this, projectionData)) {
+                // 光拿到授权不够：Android 14 会回收「声明了 mediaProjection 却没有真正投屏」
+                // 的投影对象，表现就是刚授权完几秒又变成未授权。所以立刻开始出帧，
+                // 并让它常驻（会话结束时也不停），把投影保住。
+                capture.startCapture()
+                isCaptureAuthorized = true
+            }
+        }
         isRunning = true
 
         val config = AppPreferences(this).loadConfig()
@@ -93,7 +116,7 @@ class RemoteAgentService : Service() {
         agentSession?.close("service-stopped")
         agentSession = null
         sessionTargetId = null
-        pendingProjectionData = null
+        capture.release()
         isCaptureAuthorized = false
         isRunning = false
 
@@ -109,8 +132,25 @@ class RemoteAgentService : Service() {
 
     private fun handleRemoteSignal(signal: RemoteSignal) {
         val payload = signal.payload
-        when (payload.optString("kind")) {
-            "control-request" -> startAgentSession(signal.fromDeviceId)
+        val kind = payload.optString("kind")
+        receivedSignals += 1
+        lastSignalKind = kind
+        Log.i(TAG, "signal: kind=$kind from=${signal.fromDeviceId.take(8)}")
+        when (kind) {
+            "control-request" -> {
+                // 端到端握手：先回执，再去做建 PeerConnection 这类慢操作。
+                // 有了这一条，A 才能区分「B 压根没收到」和「B 收到了但建连失败」——
+                // 否则只能靠超时盲猜，且两种故障在界面上完全一样。
+                val acked = SignalingRepository.sendSignal(
+                    signal.fromDeviceId,
+                    JSONObject()
+                        .put("kind", "control-ack")
+                        .put("protocolVersion", 1),
+                )
+                lastAckResult = acked
+                Log.i(TAG, "control-ack sent=$acked")
+                startAgentSession(signal.fromDeviceId)
+            }
             "webrtc-answer" -> {
                 if (signal.fromDeviceId == sessionTargetId) {
                     agentSession?.setRemoteAnswer(payload.optString("sdp"))
@@ -139,35 +179,39 @@ class RemoteAgentService : Service() {
     }
 
     private fun startAgentSession(controllerDeviceId: String) {
+        Log.i(TAG, "startAgentSession from=${controllerDeviceId.take(8)}")
         val existing = agentSession
         if (existing != null) {
             if (controllerDeviceId == sessionTargetId) {
+                Log.i(TAG, "same controller resend offer")
                 existing.resendOffer()
             } else {
+                Log.w(TAG, "busy: current=${sessionTargetId?.take(8)}")
                 sendSessionError(controllerDeviceId, "DEVICE_BUSY")
             }
             return
         }
 
         if (!RemoteAccessibilityService.isConnected()) {
+            Log.w(TAG, "reject: accessibility not connected")
             sendSessionError(controllerDeviceId, "ACCESSIBILITY_NOT_ENABLED")
             return
         }
 
-        val projectionData = pendingProjectionData
-        if (projectionData == null) {
+        if (!capture.isReady()) {
+            Log.w(TAG, "reject: capture not prepared (B 端还没授权屏幕采集)")
             sendSessionError(controllerDeviceId, "CAPTURE_AUTH_REQUIRED")
             return
         }
 
+        Log.i(TAG, "creating RTC session")
         startInForeground(withProjection = true)
-        pendingProjectionData = null
         sessionTargetId = controllerDeviceId
         lateinit var session: AgentRtcSession
 
         session = AgentRtcSession(
             context = this,
-            projectionData = projectionData,
+            capture = capture,
             onLocalSignal = { payload ->
                 SignalingRepository.sendSignal(controllerDeviceId, payload)
             },
@@ -293,6 +337,19 @@ class RemoteAgentService : Service() {
         @Volatile
         var isCaptureAuthorized: Boolean = false
             private set
+
+        /** 现场诊断用：服务这条订阅实际收到多少条信号。 */
+        @Volatile
+        var receivedSignals: Int = 0
+            internal set
+
+        @Volatile
+        var lastSignalKind: String = "无"
+            internal set
+
+        @Volatile
+        var lastAckResult: Boolean? = null
+            internal set
 
         fun start(context: Context) {
             val intent = Intent(context, RemoteAgentService::class.java).setAction(ACTION_START)
