@@ -79,6 +79,19 @@ object SignalingRepository {
         client.ensureConnected()
     }
 
+    /**
+     * 保活闹钟醒来时主动上报一次存活，顺带当探针用。
+     *
+     * 返回 false 表示这条连接已经发不出去了（socket 没了 / online 已落），
+     * 调用方应立刻走一次强制重建，而不是干等 25 分钟的沉默超时。
+     */
+    fun reportPresence(): Boolean = client.reportPresence()
+
+    /** 上报失败后的强制重建，跳过所有"看起来还正常"的判断。 */
+    fun forceReconnect() {
+        client.forceReconnect()
+    }
+
     fun refreshDevices(): Boolean = client.refreshDevices()
 
     fun sendControlRequest(targetDeviceId: String): Boolean =

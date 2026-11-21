@@ -18,8 +18,19 @@ export const PEAK_END_HOUR = 9;
 /** 峰值期心跳间隔。 */
 export const PEAK_INTERVAL_MS = 2 * 60 * 1000;
 
-/** 非峰值期心跳间隔。 */
+/** 非峰值期业务心跳间隔。 */
 export const OFFPEAK_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * 保活探测周期：服务端多久碰一次连接，确认对端还活着。
+ *
+ * 和业务心跳分开的原因：业务心跳是"多久向用户证明我在线"（用户要的 2 分钟 / 60 分钟），
+ * 保活是"多久确认这条 TCP 还通"。混用会让死连接最长挂 3 小时才被回收
+ * （60 分钟 × 3 次容错），期间控制端点进去必然连不上。
+ *
+ * 10 分钟这个值同时对齐被控端的 Doze 闹钟下界（9 分钟），两边节奏一致才不会错位。
+ */
+export const KEEP_ALIVE_INTERVAL_MS = 10 * 60 * 1000;
 
 /** 连续多少轮没有 pong 才判定失联。 */
 export const MAX_MISSED_HEARTBEATS = 3;
@@ -73,7 +84,13 @@ export function msUntilNextPeakStart(now: Date = new Date()): number {
   return deltaMinutes * MINUTE_MS - second * 1000;
 }
 
-/** 下一次定时器应该等多久：正常间隔，但不跨过峰值窗口起点。 */
+/**
+ * 下一次保活探测应该等多久：正常间隔，但不跨过峰值窗口起点。
+ *
+ * 非峰值期用 [KEEP_ALIVE_INTERVAL_MS]（10 分钟）而不是业务心跳的 60 分钟——
+ * 否则一条已经死掉的连接要挂满 3 小时才被 terminate。
+ */
 export function nextDelayMs(now: Date = new Date()): number {
-  return Math.max(1000, Math.min(intervalMs(now), msUntilNextPeakStart(now)));
+  const keepAlive = isPeak(now) ? PEAK_INTERVAL_MS : KEEP_ALIVE_INTERVAL_MS;
+  return Math.max(1000, Math.min(keepAlive, msUntilNextPeakStart(now)));
 }

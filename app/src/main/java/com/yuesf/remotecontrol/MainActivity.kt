@@ -476,6 +476,7 @@ class MainActivity : AppCompatActivity() {
             append("（").append(RemoteAgentService.captureProfileLabel()).append("）")
             append(" / 电池 ").append(battery)
             append(" / Doze ").append(doze)
+            append(" / Wi-Fi锁 ").append(RemoteAgentService.wifiLockLabel())
             append(" / 闹钟 ").append(alarm)
             append(" / 悬浮窗 ").append(overlay)
             append(" / 错误 ").append(lastErrorDesc)
@@ -701,11 +702,13 @@ class MainActivity : AppCompatActivity() {
             ?: return getString(R.string.presence_online)
         // 服务端与本机时钟可能有几秒偏差，算出负数时按刚上报处理。
         val minutes = ((System.currentTimeMillis() - seenAt) / 60_000).coerceAtLeast(0).toInt()
-        // 阈值跟着心跳节拍走：平时 60 分钟一拍，就不能拿 10 分钟去判失联，
-        // 否则非峰值时段整段时间都在显示「已失联」，等于把正常状态报成故障。
-        val intervalMinutes = (HeartbeatPolicy.intervalMs() / 60_000).coerceAtLeast(1).toInt()
-        val onlineWindow = intervalMinutes + 1
-        val lostWindow = intervalMinutes * HeartbeatPolicy.MAX_MISSED_HEARTBEATS
+        // 阈值必须跟**保活周期**对齐，不是业务心跳。
+        // lastSeenAt 是 B 每轮保活时刷新的（10 分钟），如果拿 60 分钟的业务心跳
+        // 去算窗口，非峰值时段会长时间显示「N 分钟前」，用户以为快失联了。
+        val keepAliveMinutes =
+            (HeartbeatPolicy.KEEP_ALIVE_INTERVAL_MS / 60_000).coerceAtLeast(1).toInt()
+        val onlineWindow = keepAliveMinutes + 2
+        val lostWindow = keepAliveMinutes * HeartbeatPolicy.MAX_MISSED_HEARTBEATS
         return when {
             minutes <= onlineWindow -> getString(R.string.presence_online)
             minutes < lostWindow -> getString(R.string.presence_minutes_ago, minutes)

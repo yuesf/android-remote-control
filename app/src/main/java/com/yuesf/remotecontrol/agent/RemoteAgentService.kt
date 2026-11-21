@@ -88,9 +88,8 @@ class RemoteAgentService : Service() {
         isRunning = true
         instance = this
         acquireWakeLock()
-        if (HOLD_WIFI_LOCK_WHEN_IDLE) {
-            acquireWifiLock()
-        }
+        // 无条件持有：不充电 + 锁屏时 Wi-Fi 会进 PS，锁一放长连接就废。
+        acquireWifiLock()
         scheduleKeepAliveAlarm()
         registerNetworkMonitor()
         Log.i(TAG, "service created, subscribing signals")
@@ -132,11 +131,27 @@ class RemoteAgentService : Service() {
             )
             if (isRunning) {
                 acquireWakeLock()
-                if (HOLD_WIFI_LOCK_WHEN_IDLE) {
-                    acquireWifiLock()
-                }
+                // Wi-Fi 锁必须一直持有：Doze 一进来 radio 就会进 PS，锁没了下行包
+                // 会被 AP 缓存到 DTIM 才送达，长连接就等于断了（详见 acquireWifiLock 注释）。
+                acquireWifiLock()
                 runCatching { SignalingRepository.ensureConnected() }
                     .onFailure { FileLog.append("alarm reconnect failed: ${it.javaClass.simpleName}") }
+
+                // 主动上报一次存活。
+                // 只靠服务端 ping 刷新 lastSeenAt 是不够的——服务端的业务心跳按用户规则
+                // 走（非峰值 60 分钟），控制端在线判定会读到 60 分钟前的旧值，
+                // 把一台好好的设备显示成「已失联」。这里每轮保活（10 分钟）报一次，
+                // 控制端 12 分钟窗口才是准的。
+                val reported = runCatching { SignalingRepository.reportPresence() }
+                    .getOrDefault(false)
+                if (!reported) {
+                    // 连一条 ping 都发不出去，这条连接已经没救了，直接重建，
+                    // 不要等 25 分钟的沉默超时。
+                    FileLog.append("presence failed -> force rebuild")
+                    runCatching { SignalingRepository.forceReconnect() }
+                        .onFailure { FileLog.append("force rebuild failed: ${it.javaClass.simpleName}") }
+                }
+
                 maybeAutoRequestCapture()
                 scheduleKeepAliveAlarm()
                 return START_STICKY
@@ -210,36 +225,50 @@ class RemoteAgentService : Service() {
     }
 
     /**
-     * Wi-Fi 锁：**常驻持有**，用 LOW_LATENCY 而不是 HIGH_PERF。
+     * Wi-Fi 锁：**常驻持有，且必须用 HIGH_PERF**。
      *
-     * 上一版为了省电改成「只在会话期间持有」，结果在「拔充电线 + 锁屏」场景下
-     * 射频按 DTIM 周期深度休眠，长连接更容易被判死。离线是功能故障，
-     * 比多耗几十毫瓦严重得多，所以恢复常驻。
+     * 这里踩过一个很隐蔽的坑，记下来别再犯：
      *
-     * 模式选 LOW_LATENCY（API 29+）：它只承诺「保低延迟」，不像 HIGH_PERF 那样
-     * 强制 radio 全速运行，在同样能维持长连接的前提下功耗更低。
-     * 需要进一步省电可以把 [HOLD_WIFI_LOCK_WHEN_IDLE] 改回 false，
-     * 代价是接受偶尔离线。
+     * 之前用的是 `WIFI_MODE_FULL_LOW_LATENCY`（type=4），理由是文档说它更省电。
+     * 但实测 `dumpsys wifi` 里 `mPowerSaveDisableRequests=0`——**它压根没有禁用
+     * Wi-Fi 省电模式**。AOSP 的 WifiLockManager 里只有 HIGH_PERF 会去拧
+     * power-save 开关，LOW_LATENCY 只是给前台实时应用加个调度提示，
+     * 而且 `WifiLockManager#onAppForeground` 说明它依赖应用在前台。
+     *
+     * 后果正好对上用户报的现象：
+     * - 插着充电线 → 系统本来就不让 radio 省电 → 一切正常（我之前的测试全是假通过）
+     * - 拔线 + 锁屏 → Wi-Fi 进 PS 模式，下行帧被 AP 缓存到 DTIM 周期才送达
+     *   → 服务端 ping 的 pong 回不去 → 连续 3 轮判定失联 → A 上显示「B 不在线」
+     *
+     * 所以只能用 HIGH_PERF（type=3）。它虽然被标记 deprecated，但行为是对的：
+     * 会让 `mPowerSaveDisableRequests` 加一，radio 不进 PS。
+     * 这是「随时可连」在射频层的硬成本，和 wakelock 一样去不掉。
      */
     private fun acquireWifiLock() {
         if (wifiLock != null) {
             return
         }
         val wifi = applicationContext.getSystemService(WifiManager::class.java)
-        // LOW_LATENCY 从 API 29 开始有，语义正是「实时应用要保低延迟」，
-        // 比 HIGH_PERF 少一层「强制 radio 全速」的浪费，minSdk 恰好是 29。
-        val mode = WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-        val lock = wifi?.createWifiLock(mode, WIFI_LOCK_TAG)
+        @Suppress("DEPRECATION")
+        val lock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WIFI_LOCK_TAG)
         wifiLock = lock?.apply {
             setReferenceCounted(false)
             runCatching { acquire() }
                 .onFailure { Log.w(TAG, "acquire wifi lock failed", it) }
         }
         if (wifiLock?.isHeld == true) {
-            FileLog.append("wifi lock acquired")
+            FileLog.append("wifi lock acquired (high_perf)")
         }
     }
 
+    /**
+     * 会话结束时**不放锁**。
+     *
+     * 之前的策略是"会话结束就放 Wi-Fi 锁省电"，这在插着充电线时看不出问题
+     * （充电状态下系统本来就不让 radio 省电），一旦拔线就会掉线。
+     * 所以 [HOLD_WIFI_LOCK_WHEN_IDLE] 固定为 true，这个方法实际上是个空操作，
+     * 留着它是为了保留"万一以后要回退"的开关位置。
+     */
     private fun releaseWifiLock() {
         if (HOLD_WIFI_LOCK_WHEN_IDLE) {
             return
@@ -711,6 +740,18 @@ class RemoteAgentService : Service() {
             instance?.let { service ->
                 runCatching { service.capture.profileLabel() }.getOrNull()
             } ?: "未采集"
+
+        /**
+         * Wi-Fi 锁状态，给诊断行用。
+         *
+         * 这个值决定「拔掉充电线 + 锁屏」后还能不能被连上：锁没拿到，
+         * radio 进 PS，下行包按 DTIM 周期才送达，长连接会被服务端判死。
+         * 排查离线问题时第一个要看的就它。
+         */
+        fun wifiLockLabel(): String {
+            val held = instance?.wifiLock?.isHeld == true
+            return if (held) "已锁" else "未锁"
+        }
 
         @Volatile
         var isCaptureAuthorized: Boolean = false

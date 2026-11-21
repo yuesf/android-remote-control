@@ -135,6 +135,53 @@ class SignalingClient(private val listener: Listener) {
 
     fun refreshDevices(): Boolean = sendJson(JSONObject().put("type", "list_devices"))
 
+    /**
+     * 无条件重建连接。
+     *
+     * 和 [ensureConnected] 的区别：后者尊重"online 且没沉默太久"就不动，
+     * 这里则直接丢掉现有 socket 重开。用在「保活上报明确失败」之后——
+     * 连一条 ping 都发不出去，说明这条连接已经没救了，等沉默超时纯属浪费时间。
+     */
+    @Synchronized
+    fun forceReconnect() {
+        val activeConfig = config ?: return
+        if (manuallyClosed) {
+            return
+        }
+        FileLog.append("forceReconnect: rebuild from scratch")
+        connect(activeConfig, force = true)
+    }
+
+    /**
+     * 主动上报一次「我还活着」。
+     *
+     * 为什么需要它，而不是等服务端 ping：
+     * 服务端的业务心跳按用户规则走（峰值 2 分钟 / 平时 60 分钟），非峰值期意味着
+     * 服务端要 60 分钟才碰这条连接一次。控制端的在线判定读的是 `lastSeenAt`，
+     * 如果只靠服务端 ping 刷新，平时 lastSeenAt 会长时间停在 60 分钟前，
+     * 控制端就会把一台好好的设备显示成「已失联」。
+     *
+     * 所以被控端的保活闹钟（10 分钟一轮）醒来时，顺手发一条 ping：
+     * - 服务端收到任何消息都会 touch，lastSeenAt 立刻刷新
+     * - 顺带验证这条连接确实还能双向通，比"连接对象还在"可靠得多
+     *
+     * 返回 false 说明这条连接已经发不出去了，调用方应把它当作失效信号处理。
+     */
+    fun reportPresence(): Boolean {
+        if (!online) {
+            return false
+        }
+        val ok = sendJson(
+            JSONObject()
+                .put("type", "ping")
+                .put("nonce", SystemClock.elapsedRealtime().toString()),
+        )
+        if (!ok) {
+            FileLog.append("presence report failed: socket=${socket == null}")
+        }
+        return ok
+    }
+
     fun sendControlRequest(targetDeviceId: String): Boolean =
         sendSignal(
             targetDeviceId,
