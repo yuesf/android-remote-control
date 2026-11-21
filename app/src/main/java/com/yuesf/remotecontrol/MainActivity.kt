@@ -30,6 +30,7 @@ import com.yuesf.remotecontrol.accessibility.CaptureAutoApprove
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.agent.RemoteAgentService
 import com.yuesf.remotecontrol.data.AppPreferences
+import com.yuesf.remotecontrol.debug.FileLog
 import com.yuesf.remotecontrol.data.DeviceRole
 import com.yuesf.remotecontrol.data.SpaceGuard
 import com.yuesf.remotecontrol.data.normalizeServerUrl
@@ -93,6 +94,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FileLog.init(this)
 
         if (!SpaceGuard.isPrimarySpace(this)) {
             spaceBlocked = true

@@ -57,6 +57,14 @@
             android:exported="false"
             android:theme="@style/Theme.RemoteControl.Transparent" />
 
+        <activity
+            android:name=".SessionWakeActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:theme="@style/Theme.RemoteControl.Transparent"
+            android:turnScreenOn="true" />
+
         <service
             android:name=".agent.RemoteAgentService"
             android:exported="false"

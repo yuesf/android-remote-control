@@ -8,8 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
@@ -23,6 +25,7 @@ import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.data.AppPreferences
 import com.yuesf.remotecontrol.data.DeviceRole
 import com.yuesf.remotecontrol.data.SpaceGuard
+import com.yuesf.remotecontrol.debug.FileLog
 import com.yuesf.remotecontrol.signaling.RemoteSignal
 import com.yuesf.remotecontrol.signaling.SignalingRepository
 import com.yuesf.remotecontrol.webrtc.AgentRtcSession
@@ -45,6 +48,9 @@ class RemoteAgentService : Service() {
     /** 上次自动拉起采集授权框的时间，用于节流。 */
     private var lastCaptureAutoRequestAt = 0L
 
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+
     override fun onCreate() {
         super.onCreate()
         // 双开空间里的实例会持有独立 deviceId，与主空间实例抢同一个被控身份。
@@ -53,8 +59,11 @@ class RemoteAgentService : Service() {
             stopSelf()
             return
         }
+        FileLog.init(this)
+        FileLog.append("service created")
         createNotificationChannel()
         isRunning = true
+        acquireKeepAliveLocks()
         Log.i(TAG, "service created, subscribing signals")
         // 系统层终止投屏时，把当前会话收掉，但服务继续在线等待下一次连接。
         capture.onProjectionStopped = {
@@ -121,6 +130,47 @@ class RemoteAgentService : Service() {
     }
 
     /**
+     * 熄屏保活锁。
+     *
+     * 前台服务只保证进程不被回收，**不保证进程被调度**：屏幕一灭，没有唤醒锁时
+     * SoC 会进入挂起，WebSocket 收到的数据只能堆在内核接收队列里没人读。
+     *
+     * 实测症状：锁屏后 `/proc/net/tcp6` 里到 8787 的连接长期停在 CLOSE_WAIT
+     * 且接收队列有 1 字节未读，服务端还认为设备在线，实际任何 control-request
+     * 都得不到响应——A 端表现为「连不上」，而在 B 上看不出任何异常。
+     *
+     * Wi-Fi 锁是另一半：熄屏后 radio 会进省电模式，抓包/唤醒都不可靠，
+     * 用 HIGH_PERF 让 Wi-Fi 保持全速，牺牲一点功耗换取随时可达。
+     */
+    private fun acquireKeepAliveLocks() {
+        if (wakeLock == null) {
+            val power = getSystemService(PowerManager::class.java)
+            wakeLock = power?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, WAKE_LOCK_TAG)?.apply {
+                setReferenceCounted(false)
+                runCatching { acquire() }
+                    .onFailure { Log.w(TAG, "acquire wake lock failed", it) }
+            }
+        }
+        if (wifiLock == null) {
+            val wifi = applicationContext.getSystemService(WifiManager::class.java)
+            @Suppress("DEPRECATION")
+            val lock = wifi?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, WIFI_LOCK_TAG)
+            wifiLock = lock?.apply {
+                setReferenceCounted(false)
+                runCatching { acquire() }
+                    .onFailure { Log.w(TAG, "acquire wifi lock failed", it) }
+            }
+        }
+    }
+
+    private fun releaseKeepAliveLocks() {
+        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        wakeLock = null
+        wifiLock = null
+    }
+
+    /**
      * 进程重启后投影授权必然失效（Android 14 的凭证只能用一次）。
      * 这里自动把系统授权框拉起来，由无障碍服务代点确认，做到重启后也无人值守。
      *
@@ -158,6 +208,7 @@ class RemoteAgentService : Service() {
         capture.release()
         isCaptureAuthorized = false
         isRunning = false
+        releaseKeepAliveLocks()
 
         signalJob?.cancel()
         serviceScope.cancel()
@@ -186,6 +237,7 @@ class RemoteAgentService : Service() {
         val kind = payload.optString("kind")
         receivedSignals += 1
         lastSignalKind = kind
+        FileLog.append("handle kind=$kind from=${signal.fromDeviceId.take(8)}")
         Log.i(TAG, "signal: kind=$kind from=${signal.fromDeviceId.take(8)}")
         when (kind) {
             "control-request" -> {
@@ -199,6 +251,7 @@ class RemoteAgentService : Service() {
                         .put("protocolVersion", 1),
                 )
                 lastAckResult = acked
+                FileLog.append("control-ack sent=$acked")
                 Log.i(TAG, "control-ack sent=$acked")
                 startAgentSession(signal.fromDeviceId)
             }
@@ -223,7 +276,9 @@ class RemoteAgentService : Service() {
                     agentSession?.close("remote-end")
                     agentSession = null
                     sessionTargetId = null
-                    isCaptureAuthorized = false
+                    // 采集管线是常驻的，会话结束不代表授权失效，
+                    // 这里跟着置 false 会让诊断面板误报「未授权」。
+                    isCaptureAuthorized = capture.isReady()
                 }
             }
         }
@@ -236,11 +291,21 @@ class RemoteAgentService : Service() {
             if (controllerDeviceId == sessionTargetId) {
                 Log.i(TAG, "same controller resend offer")
                 existing.resendOffer()
-            } else {
+                return
+            }
+            if (existing.isAlive()) {
                 Log.w(TAG, "busy: current=${sessionTargetId?.take(8)}")
                 sendSessionError(controllerDeviceId, "DEVICE_BUSY")
+                return
             }
-            return
+            // 残留会话：A 端异常断开（切网、锁屏、进程被杀）时不会有 session-end，
+            // PeerConnection 也不会自己结束。不收掉它，B 会永远回 DEVICE_BUSY，
+            // 从 A 看就是「怎么都连不上」，而 B 端一切正常。
+            Log.w(TAG, "reclaim stale session ${sessionTargetId?.take(8)}")
+            FileLog.append("reclaim stale session")
+            existing.close("stale-reclaim")
+            agentSession = null
+            sessionTargetId = null
         }
 
         if (!RemoteAccessibilityService.isConnected()) {
@@ -279,7 +344,7 @@ class RemoteAgentService : Service() {
                 if (agentSession === session) {
                     agentSession = null
                     sessionTargetId = null
-                    isCaptureAuthorized = false
+                    isCaptureAuthorized = capture.isReady()
                 }
             },
         )
@@ -402,6 +467,9 @@ class RemoteAgentService : Service() {
 
         /** 自动重新请求采集授权的最小间隔。 */
         private const val CAPTURE_AUTO_REQUEST_INTERVAL_MS = 120_000L
+
+        private const val WAKE_LOCK_TAG = "remotecontrol:agent"
+        private const val WIFI_LOCK_TAG = "remotecontrol:wifi"
 
         @Volatile
         var isRunning: Boolean = false

@@ -5,6 +5,7 @@ import android.os.Looper
 import android.util.Log
 import com.yuesf.remotecontrol.data.DeviceRole
 import com.yuesf.remotecontrol.data.SignalingConfig
+import com.yuesf.remotecontrol.debug.FileLog
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -12,6 +13,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 class SignalingClient(private val listener: Listener) {
     interface Listener {
@@ -23,14 +25,20 @@ class SignalingClient(private val listener: Listener) {
     }
 
     /**
-     * 刻意不设 pingInterval。
+     * 必须自己 ping。
      *
-     * 服务端每 60 秒主动发一次 WS ping，OkHttp 收到会自动回 pong，
-     * 这一来一回足以保住运营商 NAT 映射。客户端再自己 ping 一遍，
-     * 只会让射频白白多唤醒一次——移动网络下每次唤醒都要把 radio
-     * 从 idle 拉到高功耗状态好几秒，是待机耗电的主要来源之一。
+     * 曾经为了省电刻意不设 pingInterval，靠服务端每 60 秒的 ping 保活。
+     * 但那只保住了 NAT 映射，保不住「本端还活着」这个判断：socket 被静默掐断
+     * （熄屏挂起、切网、运营商回收）后，客户端没有读也没有写，就永远发现不了，
+     * 于是一直停在 READY，既不重连也不再处理任何下行消息。
+     *
+     * 现在每 25 秒发一次 ping，OkHttp 在一个周期内收不到 pong 就判定连接失效
+     * 并回调 onFailure，重连逻辑才有机会介入。配合服务端的唤醒锁，这点
+     * 射频唤醒代价可以接受——不可达的代价更高。
      */
-    private val httpClient = OkHttpClient.Builder().build()
+    private val httpClient = OkHttpClient.Builder()
+        .pingInterval(25, TimeUnit.SECONDS)
+        .build()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile
@@ -52,6 +60,13 @@ class SignalingClient(private val listener: Listener) {
 
     @Synchronized
     fun connect(newConfig: SignalingConfig) {
+        // 幂等：界面和服务都会调用 connect，但它们是同一个单例。
+        // 以前每次都 cancel + 重开，导致「刚注册好就被自己踢掉」的抖动，
+        // 旧 socket 的失败回调还可能把新连接的 online/socket 一起清掉。
+        if (!manuallyClosed && online && config == newConfig) {
+            return
+        }
+        FileLog.append("connect: ${newConfig.deviceName} (online=$online)")
         config = newConfig
         manuallyClosed = false
         online = false
@@ -89,14 +104,21 @@ class SignalingClient(private val listener: Listener) {
 
     fun sendSignal(targetDeviceId: String, payload: JSONObject): Boolean {
         if (!online) {
+            FileLog.append("send skipped: offline kind=${payload.optString("kind")}")
             return false
         }
-        return sendJson(
+        val ok = sendJson(
             JSONObject()
                 .put("type", "signal")
                 .put("targetDeviceId", targetDeviceId)
                 .put("payload", payload),
         )
+        if (!ok) {
+            FileLog.append(
+                "send failed: kind=${payload.optString("kind")} socketNull=${socket == null}",
+            )
+        }
+        return ok
     }
 
     @Synchronized
@@ -136,9 +158,16 @@ class SignalingClient(private val listener: Listener) {
 
     private fun handleDisconnect(expectedGeneration: Int, reason: String?) {
         synchronized(this) {
+            // 先判 generation 再改状态。被替换掉的旧连接同样会回调失败，
+            // 如果先执行 online=false / socket=null，就会把新连接刚建立的状态清掉，
+            // 之后所有 send 都返回 false——表现是「在线但永远不回消息」。
+            if (expectedGeneration != generation) {
+                FileLog.append("stale disconnect ignored gen=$expectedGeneration/$generation")
+                return
+            }
             online = false
             socket = null
-            if (manuallyClosed || expectedGeneration != generation || reconnectScheduled) {
+            if (manuallyClosed || reconnectScheduled) {
                 return
             }
 
@@ -238,6 +267,9 @@ class SignalingClient(private val listener: Listener) {
 
             val message = runCatching { JSONObject(text) }.getOrNull() ?: return
             val type = message.optString("type")
+            FileLog.append(
+                "in type=$type kind=${message.optJSONObject("payload")?.optString("kind")}",
+            )
             when (type) {
                 "ready" -> {
                     online = true
@@ -279,6 +311,7 @@ class SignalingClient(private val listener: Listener) {
             }
 
             val activeConfig = config ?: return
+            FileLog.append("ws open, register as ${activeConfig.deviceName}")
             Log.i(TAG, "ws open, register as ${activeConfig.role.wireValue}/${activeConfig.deviceName}")
             val register = JSONObject()
                 .put("type", "register")
@@ -290,6 +323,7 @@ class SignalingClient(private val listener: Listener) {
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             Log.w(TAG, "ws closed: code=$code reason=$reason gen=$expectedGeneration/$generation")
+            FileLog.append("ws closed code=$code reason=$reason")
             // 必须先校验 generation：被替换掉的那条旧连接同样会收到 4001，
             // 如果不判断就会把当前这条新连接也标记成「手动关闭」，从此不再重连。
             if (expectedGeneration != generation) {
@@ -310,6 +344,7 @@ class SignalingClient(private val listener: Listener) {
                 else -> "无法连接信令服务器"
             }
             Log.w(TAG, "ws failure: $detail gen=$expectedGeneration/$generation", t)
+            FileLog.append("ws failure: $detail")
             handleDisconnect(expectedGeneration, detail)
         }
     }

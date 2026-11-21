@@ -3,8 +3,10 @@ package com.yuesf.remotecontrol.webrtc
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.WindowManager
+import com.yuesf.remotecontrol.SessionWakeActivity
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.signaling.SignalingRepository
 import org.json.JSONObject
@@ -42,6 +44,17 @@ class AgentRtcSession(
     @Volatile
     private var closed = false
 
+    /** 建连成功的时刻。用于判断「会话是否还值得保留」。 */
+    @Volatile
+    private var connectedOnce = false
+
+    @Volatile
+    private var lastPeerState: PeerConnection.PeerConnectionState = PeerConnection.PeerConnectionState.NEW
+
+    private val startedAt = android.os.SystemClock.elapsedRealtime()
+    private var answerTimeout: Runnable? = null
+    private var dropTimeout: Runnable? = null
+
     fun start() {
         try {
             WebRtcEngine.initialize(appContext)
@@ -62,7 +75,10 @@ class AgentRtcSession(
             channel?.registerObserver(dataChannelObserver)
             controlChannel = channel
 
+            // 熄屏时 SurfaceFlinger 不出帧，先把屏幕点亮，否则 A 连上也是黑屏。
+            SessionWakeActivity.hold(appContext)
             createAndSendOffer(peer)
+            armAnswerTimeout()
             onStatus("capturing")
         } catch (error: Throwable) {
             close("start-failed")
@@ -102,6 +118,45 @@ class AgentRtcSession(
         offerPayload?.let(onLocalSignal)
     }
 
+    /**
+     * 会话是否还该占着这个位置。
+     *
+     * 曾经的问题：A 端异常断开（切网、锁屏、进程被杀）后 B 既没收到 session-end，
+     * PeerConnection 也不会主动结束，于是 B 永远认为「忙」，后续每次连接都被
+     * DEVICE_BUSY 顶掉——从 A 看就是「怎么都连不上」，而 B 一切正常。
+     *
+     * 判据：已连成功过就还活着；或者刚开始不久（还在等 answer）。
+     */
+    fun isAlive(): Boolean {
+        if (closed) {
+            return false
+        }
+        if (connectedOnce) {
+            return lastPeerState != PeerConnection.PeerConnectionState.FAILED &&
+                lastPeerState != PeerConnection.PeerConnectionState.CLOSED
+        }
+        return SystemClock.elapsedRealtime() - startedAt < ANSWER_TIMEOUT_MS
+    }
+
+    /** 对端迟迟不应答就直接收掉，别让它把后续连接挡在门外。 */
+    private fun armAnswerTimeout() {
+        val timeout = Runnable {
+            if (!closed && !connectedOnce) {
+                onStatus("answer-timeout")
+                close("answer-timeout")
+            }
+        }
+        answerTimeout = timeout
+        mainHandler.postDelayed(timeout, ANSWER_TIMEOUT_MS)
+    }
+
+    private fun cancelTimers() {
+        answerTimeout?.let(mainHandler::removeCallbacks)
+        dropTimeout?.let(mainHandler::removeCallbacks)
+        answerTimeout = null
+        dropTimeout = null
+    }
+
     fun close(reason: String) {
         synchronized(this) {
             if (closed) {
@@ -110,6 +165,7 @@ class AgentRtcSession(
             closed = true
         }
 
+        cancelTimers()
         runCatching {
             controlChannel?.unregisterObserver()
             controlChannel?.close()
@@ -124,6 +180,7 @@ class AgentRtcSession(
 
         // 采集管线常驻：这里不停采集，也不销毁投影。
         // Android 14 一旦释放全部虚拟屏就会终止投影，下次连接又得让用户重新授权。
+        SessionWakeActivity.release()
         pendingRemoteCandidates.clear()
         offerPayload = null
         onStatus("closed:$reason")
@@ -225,7 +282,29 @@ class AgentRtcSession(
         override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<MediaStream>) = Unit
 
         override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {
+            lastPeerState = newState
             onStatus("peer-state:${newState.name}")
+            if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
+                connectedOnce = true
+                answerTimeout?.let(mainHandler::removeCallbacks)
+                answerTimeout = null
+                return
+            }
+            if (newState == PeerConnection.PeerConnectionState.FAILED) {
+                close("peer-failed")
+                return
+            }
+            // DISCONNECTED 可能是短时抖动（切网、熄屏），给 10 秒自愈窗口再收会话。
+            if (newState == PeerConnection.PeerConnectionState.DISCONNECTED && connectedOnce) {
+                dropTimeout?.let(mainHandler::removeCallbacks)
+                val drop = Runnable {
+                    if (!closed && lastPeerState == PeerConnection.PeerConnectionState.DISCONNECTED) {
+                        close("peer-lost")
+                    }
+                }
+                dropTimeout = drop
+                mainHandler.postDelayed(drop, PEER_DROP_TIMEOUT_MS)
+            }
         }
     }
 
@@ -318,5 +397,11 @@ class AgentRtcSession(
 
         /** 与采集帧率保持一致，避免编码器按更高的目标帧率空转。 */
         const val MAX_VIDEO_FRAMERATE = 12
+
+        /** 发出 offer 后等 answer 的上限。 */
+        const val ANSWER_TIMEOUT_MS = 20_000L
+
+        /** 已连通的会话掉线后，保留多久再收掉。 */
+        const val PEER_DROP_TIMEOUT_MS = 10_000L
     }
 }
