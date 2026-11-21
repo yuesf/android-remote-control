@@ -4,6 +4,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { AppConfig } from "../config.js";
 import type { Logger } from "../shared/logger.js";
 import { SignalingHub } from "./hub.js";
+import { MAX_MISSED_HEARTBEATS, nextDelayMs } from "./heartbeat-policy.js";
 import type { DeviceRegistry } from "./registry.js";
 import { isBearerAuthorized } from "../http/auth.js";
 
@@ -22,20 +23,15 @@ const WS_CLOSED = 3;
 const WS_OPEN = 1;
 
 /**
- * 心跳周期 10 分钟，连续 3 次没有回应才判定失联（约 30 分钟）。
+ * 心跳节拍不是固定值，由 [nextDelayMs] 按北京时间算：
+ * 早 8:00–9:00 每 2 分钟一轮，其余每 60 分钟一轮，并自动截断到峰值窗口起点。
+ * 连续 [MAX_MISSED_HEARTBEATS] 轮没有 pong 才判定失联。
  *
- * 这个值的取舍很直接：待机时每次 ping 都会把手机的射频从 idle 拉到高功耗状态
- * 数秒，60 秒一次等于一天 1440 次唤醒，是待机耗电的主要来源之一。
- * 拉到 10 分钟，唤醒次数降到 144 次，而代价只是「掉线要被发现得晚一点」。
- *
- * 为什么敢放到 10 分钟：运营商 NAT 的 TCP 会话超时通常在 5 分钟以上，
- * 加上客户端有自己的重连与精确闹钟兜底，即使这条连接被中间设备回收也能自愈。
- *
- * 为什么是 3 次而不是 1 次：一次丢包、一次弱网、一次射频休眠都可能漏掉单轮心跳，
- * 用 1 次判定会把「短暂抖动」误判成「失联」，控制端就会反复看到设备上下线。
+ * 为什么非峰值敢放到 60 分钟：这个系统的使用场景是"上班第一件事连一下手机"，
+ * 其余时间设备静置。拉长间隔把一天的射频唤醒从 1440 次压到 24 次量级。
+ * 代价是那条长连接在非峰值时段大概率已被 NAT 回收，下次连接需要几秒重建 —— 这是有意接受的。
  */
-const HEARTBEAT_INTERVAL_MS = 10 * 60_000;
-const MAX_MISSED_HEARTBEATS = 3;
+
 
 export function attachSignalingServer(
   server: Server,
@@ -70,12 +66,17 @@ export function attachSignalingServer(
   });
 
   /**
-   * 心跳循环：每 10 分钟探一次，连续 3 次没回应就掐掉这条连接。
+   * 心跳循环。
    *
-   * 注意这里**只**判定传输层死活。设备「连着但很卡」不会因此掉线，
+   * 用自调度的 setTimeout 而不是 setInterval，因为间隔本身会变（峰值 2 分钟 /
+   * 平时 60 分钟），而且每次都要按「距下一个窗口起点还有多久」重新截断。
+   *
+   * 这里只判定传输层死活。设备「连着但很卡」不会因此掉线，
    * 那是控制端根据 `lastSeenAt` 自己决定的。
    */
-  const heartbeat = setInterval(() => {
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+
+  const runHeartbeatRound = (): void => {
     for (const client of webSocketServer.clients) {
       const socket = client as HeartbeatSocket;
       if (socket.readyState !== WS_OPEN) {
@@ -93,8 +94,18 @@ export function attachSignalingServer(
       socket.missedHeartbeats = missed + 1;
       socket.ping();
     }
-  }, HEARTBEAT_INTERVAL_MS);
-  heartbeat.unref();
+  };
+
+  const scheduleHeartbeat = (): void => {
+    const delay = nextDelayMs();
+    heartbeatTimer = setTimeout(() => {
+      runHeartbeatRound();
+      scheduleHeartbeat();
+    }, delay);
+    heartbeatTimer.unref();
+  };
+
+  scheduleHeartbeat();
 
   const handleUpgrade = (request: import("node:http").IncomingMessage, socket: Duplex, head: Buffer): void => {
     const url = new URL(request.url ?? "/", "http://localhost");
@@ -121,7 +132,10 @@ export function attachSignalingServer(
 
   return {
     close: async () => {
-      clearInterval(heartbeat);
+      if (heartbeatTimer !== null) {
+        clearTimeout(heartbeatTimer);
+        heartbeatTimer = null;
+      }
       server.off("upgrade", handleUpgrade);
       for (const client of webSocketServer.clients) {
         client.close(1001, "Server shutting down");

@@ -32,11 +32,12 @@ class SignalingClient(private val listener: Listener) {
      * 60 秒一次是一天 1440 次唤醒，25 秒一次是 3456 次——这是待机耗电里
      * 数得着的一项，而它换来的只是「更早一点发现断线」。
      *
-     * 现在的心跳契约是：
-     * - 服务端每 10 分钟 ping 一次，客户端库自动回 pong（不动应用代码）；
+     * 现在的心跳契约是（节拍统一由 [HeartbeatPolicy] 决定）：
+     * - 早 8:00–9:00 每 2 分钟一轮，其余时间每 60 分钟一轮，服务端发起 ping，
+     *   客户端库自动回 pong（不动应用代码）；
      * - 连续 3 次不回，服务端 terminate，本端收到关闭回调后重连；
-     * - 本端另有 `lastInboundAt` 兜底：超过 [STALE_INBOUND_TIMEOUT_MS] 没收到
-     *   任何数据，即使标记为 online 也主动重建连接（黑洞 TCP 只能这么破）。
+     * - 本端另有 `lastInboundAt` 兜底：超过 `HeartbeatPolicy.staleInboundTimeoutMs()`
+     *   没收到任何数据，即使标记为 online 也主动重建连接（黑洞 TCP 只能这么破）。
      */
     private val httpClient = OkHttpClient.Builder()
         .pingInterval(0, TimeUnit.SECONDS)
@@ -120,7 +121,7 @@ class SignalingClient(private val listener: Listener) {
         }
         if (online) {
             val silence = SystemClock.elapsedRealtime() - lastInboundAt
-            if (silence < STALE_INBOUND_TIMEOUT_MS) {
+            if (silence < HeartbeatPolicy.staleInboundTimeoutMs()) {
                 return
             }
             // 「标记在线」不等于「真的通」：黑洞 TCP 下 socket 不会报错，
@@ -395,14 +396,5 @@ class SignalingClient(private val listener: Listener) {
     companion object {
         private const val TAG = "SignalingClient"
         private const val CLOSE_DEVICE_REPLACED = 4001
-
-        /**
-         * 多久没收到服务端任何字节就认为这条连接已经死了。
-         *
-         * 服务端 10 分钟一次 ping，正常情况下本端每 10 分钟至少收到一帧。
-         * 取 35 分钟 = 3 个心跳周期再多一点，和服务端「3 次没回就失联」对齐：
-         * 服务端判死它会关连接，服务端自己出问题时则靠这个超时兜底。
-         */
-        private const val STALE_INBOUND_TIMEOUT_MS = 35 * 60 * 1000L
     }
 }

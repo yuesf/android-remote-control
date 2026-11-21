@@ -39,6 +39,7 @@ import com.yuesf.remotecontrol.data.normalizeServerUrl
 import com.yuesf.remotecontrol.databinding.ActivityMainBinding
 import com.yuesf.remotecontrol.signaling.ConnectionPhase
 import com.yuesf.remotecontrol.signaling.DeviceInfo
+import com.yuesf.remotecontrol.signaling.HeartbeatPolicy
 import com.yuesf.remotecontrol.signaling.SignalingRepository
 import com.yuesf.remotecontrol.signaling.SignalingState
 import kotlinx.coroutines.launch
@@ -700,9 +701,14 @@ class MainActivity : AppCompatActivity() {
             ?: return getString(R.string.presence_online)
         // 服务端与本机时钟可能有几秒偏差，算出负数时按刚上报处理。
         val minutes = ((System.currentTimeMillis() - seenAt) / 60_000).coerceAtLeast(0).toInt()
+        // 阈值跟着心跳节拍走：平时 60 分钟一拍，就不能拿 10 分钟去判失联，
+        // 否则非峰值时段整段时间都在显示「已失联」，等于把正常状态报成故障。
+        val intervalMinutes = (HeartbeatPolicy.intervalMs() / 60_000).coerceAtLeast(1).toInt()
+        val onlineWindow = intervalMinutes + 1
+        val lostWindow = intervalMinutes * HeartbeatPolicy.MAX_MISSED_HEARTBEATS
         return when {
-            minutes < PRESENCE_ONLINE_WINDOW_MINUTES -> getString(R.string.presence_online)
-            minutes < PRESENCE_LOST_WINDOW_MINUTES -> getString(R.string.presence_minutes_ago, minutes)
+            minutes <= onlineWindow -> getString(R.string.presence_online)
+            minutes < lostWindow -> getString(R.string.presence_minutes_ago, minutes)
             else -> getString(R.string.presence_lost)
         }
     }
@@ -795,11 +801,5 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         /** 本地重算在线状态的节奏。不发网络请求，只是一次文本重排。 */
         const val PRESENCE_TICK_MS = 30_000L
-
-        /** 距最后一次上报多久以内算「在线」，与被控端的心跳周期一致。 */
-        const val PRESENCE_ONLINE_WINDOW_MINUTES = 10
-
-        /** 超过多久算「已失联」，等于 3 个心跳周期，和服务端的判定阈值对齐。 */
-        const val PRESENCE_LOST_WINDOW_MINUTES = 30
     }
 }

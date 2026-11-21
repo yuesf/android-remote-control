@@ -31,6 +31,7 @@ import com.yuesf.remotecontrol.data.AppPreferences
 import com.yuesf.remotecontrol.data.DeviceRole
 import com.yuesf.remotecontrol.data.SpaceGuard
 import com.yuesf.remotecontrol.debug.FileLog
+import com.yuesf.remotecontrol.signaling.HeartbeatPolicy
 import com.yuesf.remotecontrol.signaling.RemoteSignal
 import com.yuesf.remotecontrol.signaling.SignalingRepository
 import com.yuesf.remotecontrol.webrtc.AgentRtcSession
@@ -269,7 +270,8 @@ class RemoteAgentService : Service() {
      *
      * `setExactAndAllowWhileIdle` 是 Doze 里仍会按约定时间投递的少数通道之一，
      * 投递时会短暂解除空闲限制（对已进电池白名单的应用，这段时间网络是通的），
-     * 正好够把连接续上。Doze 对该接口限流：同一应用最快 9 分钟一次，所以间隔取 10 分钟。
+     * 正好够把连接续上。周期由 [HeartbeatPolicy] 决定（峰值 2 分钟 / 平时 60 分钟），
+     * 并自动截断到峰值窗口起点。Doze 对该接口限流 9 分钟，峰值期的 2 分钟实际会被顺延。
      *
      * 没有精确闹钟权限时降级到 `setAndAllowWhileIdle`：时间会漂，但 Doze 里照样能触发。
      */
@@ -285,7 +287,8 @@ class RemoteAgentService : Service() {
             Intent(this, RemoteAgentService::class.java).setAction(ACTION_KEEP_ALIVE),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val triggerAt = SystemClock.elapsedRealtime() + KEEP_ALIVE_ALARM_INTERVAL_MS
+        val delay = HeartbeatPolicy.nextDelayMs()
+        val triggerAt = SystemClock.elapsedRealtime() + delay
         val exact = runCatching {
             val canBeExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
                 alarmManager.canScheduleExactAlarms()
@@ -308,7 +311,7 @@ class RemoteAgentService : Service() {
             false
         }
         lastAlarmExact = exact
-        FileLog.append("alarm +${KEEP_ALIVE_ALARM_INTERVAL_MS / 60_000}min exact=$exact")
+        FileLog.append("alarm +${delay / 60_000}min exact=$exact")
     }
 
     private fun cancelKeepAliveAlarm() {
@@ -672,15 +675,6 @@ class RemoteAgentService : Service() {
         const val ACTION_STOP = "com.yuesf.remotecontrol.agent.STOP"
         const val ACTION_KEEP_ALIVE = "com.yuesf.remotecontrol.agent.KEEP_ALIVE"
         private const val REQUEST_KEEP_ALIVE = 4202
-
-        /**
-         * Doze 兜底闹钟周期。
-         *
-         * Doze 对 `setExactAndAllowWhileIdle` 的限流下限是 9 分钟一次，
-         * 取 10 分钟留一点余量，避免被系统判为超频而顺延。
-         * 这是「电池白名单之外还兜了一层」的保险，不是主链路。
-         */
-        private const val KEEP_ALIVE_ALARM_INTERVAL_MS = 10 * 60 * 1000L
 
         /** 自动重新请求采集授权的最小间隔。 */
         private const val CAPTURE_AUTO_REQUEST_INTERVAL_MS = 120_000L
