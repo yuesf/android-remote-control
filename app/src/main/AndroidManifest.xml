@@ -14,6 +14,11 @@
         息屏一段时间后 Doze 会冻结进程，信令连接必然掉，A 端看到的就是设备离线。
     -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!--
+        进程被杀重启后要自动把系统采集授权框拉起来，靠的就是悬浮窗权限：
+        Android 10+ 禁止后台启动 Activity，持有它才在豁免名单里。
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CAMERA" />
 
     <uses-feature
@@ -44,6 +49,13 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
             android:theme="@style/Theme.RemoteControl.Session" />
+
+        <!-- 无界面，只用于承接系统授权结果；不要出现在最近任务里。 -->
+        <activity
+            android:name=".CaptureRequestActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@style/Theme.RemoteControl.Transparent" />
 
         <service
             android:name=".agent.RemoteAgentService"

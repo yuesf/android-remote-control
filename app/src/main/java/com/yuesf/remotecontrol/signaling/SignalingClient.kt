@@ -12,7 +12,6 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 class SignalingClient(private val listener: Listener) {
     interface Listener {
@@ -23,9 +22,15 @@ class SignalingClient(private val listener: Listener) {
         fun onIceServersChanged(servers: List<IceServerSpec>)
     }
 
-    private val httpClient = OkHttpClient.Builder()
-        .pingInterval(20, TimeUnit.SECONDS)
-        .build()
+    /**
+     * 刻意不设 pingInterval。
+     *
+     * 服务端每 60 秒主动发一次 WS ping，OkHttp 收到会自动回 pong，
+     * 这一来一回足以保住运营商 NAT 映射。客户端再自己 ping 一遍，
+     * 只会让射频白白多唤醒一次——移动网络下每次唤醒都要把 radio
+     * 从 idle 拉到高功耗状态好几秒，是待机耗电的主要来源之一。
+     */
+    private val httpClient = OkHttpClient.Builder().build()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @Volatile

@@ -18,4 +18,14 @@
         <item name="android:statusBarColor">#111111</item>
         <item name="android:navigationBarColor">#111111</item>
     </style>
+
+    <!-- 承接采集授权的空壳界面：必须完全透明，让用户只看到系统自己的授权框。 -->
+    <style name="Theme.RemoteControl.Transparent" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

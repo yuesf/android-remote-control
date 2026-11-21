@@ -10,10 +10,13 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import com.yuesf.remotecontrol.CaptureRequestActivity
 import com.yuesf.remotecontrol.MainActivity
 import com.yuesf.remotecontrol.R
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
@@ -38,6 +41,9 @@ class RemoteAgentService : Service() {
     private var signalJob: Job? = null
     private var agentSession: AgentRtcSession? = null
     private var sessionTargetId: String? = null
+
+    /** 上次自动拉起采集授权框的时间，用于节流。 */
+    private var lastCaptureAutoRequestAt = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -110,7 +116,39 @@ class RemoteAgentService : Service() {
 
         runCatching { SignalingRepository.connect(config) }
             .onFailure { Log.e(TAG, "signaling connect failed", it) }
+        maybeAutoRequestCapture()
         return START_STICKY
+    }
+
+    /**
+     * 进程重启后投影授权必然失效（Android 14 的凭证只能用一次）。
+     * 这里自动把系统授权框拉起来，由无障碍服务代点确认，做到重启后也无人值守。
+     *
+     * 三个前置条件缺一不可：采集确实失效、有悬浮窗权限（后台启动 Activity 的豁免项）、
+     * 无障碍服务在线（否则没人能点掉那个框）。加了 2 分钟节流，
+     * 用户若连续拒绝也不至于被反复打断。
+     */
+    private fun maybeAutoRequestCapture() {
+        if (capture.isReady()) {
+            return
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            return
+        }
+        if (!RemoteAccessibilityService.isConnected()) {
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastCaptureAutoRequestAt < CAPTURE_AUTO_REQUEST_INTERVAL_MS) {
+            return
+        }
+        lastCaptureAutoRequestAt = now
+        runCatching {
+            startActivity(
+                Intent(this, CaptureRequestActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            )
+        }.onFailure { Log.w(TAG, "auto capture request failed", it) }
     }
 
     override fun onDestroy() {
@@ -361,6 +399,9 @@ class RemoteAgentService : Service() {
         private const val EXTRA_PROJECTION_DATA = "projection_data"
         const val ACTION_START = "com.yuesf.remotecontrol.agent.START"
         const val ACTION_STOP = "com.yuesf.remotecontrol.agent.STOP"
+
+        /** 自动重新请求采集授权的最小间隔。 */
+        private const val CAPTURE_AUTO_REQUEST_INTERVAL_MS = 120_000L
 
         @Volatile
         var isRunning: Boolean = false

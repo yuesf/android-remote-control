@@ -58,6 +58,9 @@
     <string name="accessibility_disabled_status">无障碍服务未启用，请先在系统设置中开启</string>
     <string name="agent_start_failed">被控服务启动失败：%1$s</string>
     <string name="settings_unavailable">当前系统无法打开该设置页面</string>
+    <string name="overlay_permission_title">允许后台自动恢复采集</string>
+    <string name="overlay_permission_message">进程被系统回收后，屏幕采集授权会失效。开启「显示在其他应用上层」后，被控端可在后台自动弹出系统授权框并由无障碍服务点掉确认，你不用手动操作。\n\n这是 Android 对后台启动界面的豁免要求，App 不会真的显示悬浮窗。</string>
+    <string name="overlay_permission_go">去开启</string>
     <string name="signaling_not_connected">信令尚未连接，无法发送请求</string>
     <string name="connection_failed">连接失败：%1$s</string>
     <string name="test_only_notice">当前为联调版本：公网访问必须配置 TLS 或可信网络，令牌仅保存在本机应用私有目录。</string>

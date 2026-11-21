@@ -14,6 +14,7 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.RtpReceiver
+import org.webrtc.RtpParameters
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import java.nio.ByteBuffer
@@ -53,6 +54,7 @@ class AgentRtcSession(
 
             val peer = WebRtcEngine.createPeerConnection(peerObserver).also { peerConnection = it }
             peer.addTrack(track, listOf("screen"))
+            applyVideoSenderLimits(peer)
             // 采集管线是常驻的，这里只是开始出帧；停会话时只停采集，不销毁管线。
             capture.startCapture()
 
@@ -128,8 +130,28 @@ class AgentRtcSession(
         onSessionClosed(reason)
     }
 
-    private fun createAndSendOffer(peer: PeerConnection) {
-        peer.createOffer(
+    /**
+     * 限制发送码率并指定降级策略。
+     *
+     * 屏幕共享的默认码率上限很高，1080 宽的静态界面也能跑到好几 Mbps，
+     * 编码器与射频都被白白占着，机身发烫、电量掉得快。1.5 Mbps 对手机界面
+     * 足够清晰；带宽不足时优先保住帧率、牺牲分辨率，操作手感不会变卡。
+     */
+    private fun applyVideoSenderLimits(peer: PeerConnection) {
+        runCatching {
+            val sender = peer.senders.firstOrNull() ?: return
+            val params = sender.parameters ?: return
+            params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE
+            params.encodings.forEach { encoding ->
+                encoding.maxBitrateBps = MAX_VIDEO_BITRATE_BPS
+                encoding.maxFramerate = MAX_VIDEO_FRAMERATE
+            }
+            sender.parameters = params
+            onStatus("sender-limits:${MAX_VIDEO_BITRATE_BPS / 1000}kbps")
+        }.onFailure { onStatus("sender-limits-failed:${it.message.orEmpty()}") }
+    }
+
+    private fun createAndSendOffer(peer: PeerConnection) {        peer.createOffer(
             object : SimpleSdpObserver() {
                 override fun onCreateSuccess(description: SessionDescription?) {
                     val localDescription = description ?: return
@@ -288,5 +310,13 @@ class AgentRtcSession(
         @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(metrics)
         return metrics.widthPixels to metrics.heightPixels
+    }
+
+    private companion object {
+        /** 1080 宽的手机界面在 1.5 Mbps 下已经足够清晰，高于此只会换来电量与发热。 */
+        const val MAX_VIDEO_BITRATE_BPS = 1_500_000
+
+        /** 与采集帧率保持一致，避免编码器按更高的目标帧率空转。 */
+        const val MAX_VIDEO_FRAMERATE = 12
     }
 }

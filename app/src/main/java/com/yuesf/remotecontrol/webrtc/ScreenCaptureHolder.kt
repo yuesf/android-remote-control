@@ -146,7 +146,18 @@ class ScreenCaptureHolder {
     companion object {
         private const val TAG = "ScreenCaptureHolder"
         private const val SCREEN_TRACK_ID = "screen0"
-        private const val CAPTURE_FRAMES_PER_SECOND = 15
-        private const val MAX_CAPTURE_DIMENSION = 1280f
+
+        /**
+         * 采集规格权衡：
+         * 1080 宽足够看清手机界面上的文字，同时把 H.264 的编码负载比 1280 降低约三成。
+         * 帧率降到 12fps——屏幕共享不需要 30fps，省下的是编码器功耗与发热。
+         *
+         * 注意这里**不能**在会话空闲时切换采集规格来省电：
+         * 切换必须 stopCapture → startCapture，等于释放并重建 VirtualDisplay，
+         * 而 Android 14 在所有 VirtualDisplay 释放后会直接 stop projection，
+         * 代价是用户每次连接都要重新授权一次屏幕采集。省下的电不值得。
+         */
+        private const val CAPTURE_FRAMES_PER_SECOND = 12
+        private const val MAX_CAPTURE_DIMENSION = 1080f
     }
 }

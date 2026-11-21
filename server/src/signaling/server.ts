@@ -41,6 +41,16 @@ export function attachSignalingServer(
     hub.attachSocket(socket);
   });
 
+  /**
+   * 心跳间隔 60 秒。
+   *
+   * 这个值直接决定被控端的待机耗电：移动网络下每次 ping 都会把射频从 idle
+   * 拉到高功耗状态数秒，30 秒一次等于持续唤醒。60 秒仍远小于运营商 NAT
+   * 的会话超时（通常 5 分钟），足以保住映射；配合客户端不再主动 ping，
+   * 待机心跳流量减少约三分之二。
+   *
+   * 代价是死连接最迟 120 秒才被发现（一轮未响应 + 下一轮 terminate）。
+   */
   const heartbeat = setInterval(() => {
     for (const client of webSocketServer.clients) {
       const socket = client as HeartbeatSocket;
@@ -51,7 +61,7 @@ export function attachSignalingServer(
       socket.isAlive = false;
       socket.ping();
     }
-  }, 30_000);
+  }, 60_000);
   heartbeat.unref();
 
   const handleUpgrade = (request: import("node:http").IncomingMessage, socket: Duplex, head: Buffer): void => {

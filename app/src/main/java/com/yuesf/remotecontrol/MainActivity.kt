@@ -26,6 +26,7 @@ import com.google.zxing.BarcodeFormat
 import com.journeyapps.barcodescanner.BarcodeEncoder
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import com.yuesf.remotecontrol.accessibility.CaptureAutoApprove
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.agent.RemoteAgentService
 import com.yuesf.remotecontrol.data.AppPreferences
@@ -51,6 +52,9 @@ class MainActivity : AppCompatActivity() {
     private var signalCount = 0
     private var lastSignalDesc = "无"
     private var lastErrorDesc = "无"
+
+    /** 悬浮窗权限引导同一次运行只弹一次。 */
+    private var overlayPromptShown = false
 
     /**
      * 运行在双开空间/应用分身时置位：此时不初始化界面绑定，
@@ -123,6 +127,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 requestNotificationPermissionIfNeeded()
                 ensureBatteryOptimizationIgnored()
+                ensureOverlayPermission()
                 runCatching { RemoteAgentService.start(this) }
                     .onFailure { error ->
                         toast(
@@ -291,9 +296,11 @@ class MainActivity : AppCompatActivity() {
             }
             requestNotificationPermissionIfNeeded()
             val manager = getSystemService(MediaProjectionManager::class.java)
+            // 与自动路径保持一致：用户点过授权按钮后，系统确认框同样交给无障碍代点，
+            // 免得「自动的不用点、手动的还要点」这种不一致。
+            CaptureAutoApprove.arm()
             runCatching { capturePermissionLauncher.launch(manager.createScreenCaptureIntent()) }
-                .onFailure { toast(getString(R.string.settings_unavailable)) }
-        }
+                .onFailure { toast(getString(R.string.settings_unavailable)) }        }
         binding.showPairingQrButton.setOnClickListener {
             showPairingQr()
         }
@@ -411,6 +418,7 @@ class MainActivity : AppCompatActivity() {
             ?.isIgnoringBatteryOptimizations(packageName)
             ?.let { if (it) "已豁免" else "受限" }
             ?: "未知"
+        val overlay = if (Settings.canDrawOverlays(this)) "已开" else "未开"
         binding.diagnosticsText.text = buildString {
             append("诊断：WS ").append(ws)
             append(" / 界面收到 ").append(signalCount).append(" 条（最后 ").append(lastSignalDesc).append("）")
@@ -420,6 +428,7 @@ class MainActivity : AppCompatActivity() {
             append(" / 服务 ").append(service)
             append(" / 采集 ").append(capture)
             append(" / 电池 ").append(battery)
+            append(" / 悬浮窗 ").append(overlay)
             append(" / 错误 ").append(lastErrorDesc)
         }
     }
@@ -496,8 +505,40 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         ensureBatteryOptimizationIgnored()
+        ensureOverlayPermission()
         binding.connectionStatusText.text = getString(R.string.status_connecting)
         renderRole()
+    }
+
+    /**
+     * 自动代点采集授权依赖「显示在其他应用上层」：Android 10+ 禁止后台启动 Activity，
+     * 只有持有该权限的应用在豁免名单里。没有它，进程重启后连授权框都拉不起来，
+     * 只能退回到「用户自己打开 App 手动点」。App 本身不显示任何悬浮窗。
+     */
+    private fun ensureOverlayPermission() {
+        if (Settings.canDrawOverlays(this)) {
+            return
+        }
+        // 同一次运行只提示一次：用户明确点过取消后不要反复打断。
+        if (overlayPromptShown) {
+            return
+        }
+        overlayPromptShown = true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.overlay_permission_title)
+            .setMessage(R.string.overlay_permission_message)
+            .setPositiveButton(R.string.overlay_permission_go) { _, _ ->
+                runCatching {
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                }.onFailure { toast(getString(R.string.settings_unavailable)) }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun requestNotificationPermissionIfNeeded() {
