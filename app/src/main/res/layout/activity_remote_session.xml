@@ -98,18 +98,25 @@
     </LinearLayout>
 
     <!--
-        控制栏隐藏后唯一可点的东西：连通时全屏都是远端画面，
-        没有把手用户就再也唤不出「返回 / 关闭」，只能杀掉进程。
-        做得够小、够淡，避免挡住远端画面底部的操作。
+        控制栏隐藏后唯一的操作入口：连通时全屏都是远端画面，
+        没有把手用户就再也唤不出「返回 / 主页 / 关闭」，只能杀掉进程。
+        做成小胶囊：深色半透明底 + 白字，浅色深色画面上都看得见。
     -->
-    <View
+    <TextView
         android:id="@+id/controlsHandle"
-        android:layout_width="96dp"
-        android:layout_height="24dp"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="12dp"
+        android:layout_marginBottom="16dp"
         android:background="@drawable/bg_controls_handle"
         android:contentDescription="@string/controls_handle_desc"
+        android:gravity="center"
+        android:minWidth="132dp"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp"
+        android:text="@string/controls_handle_label"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"
         android:visibility="gone" />
 
 </FrameLayout>

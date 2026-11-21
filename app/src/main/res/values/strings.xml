@@ -39,6 +39,8 @@
     <string name="notification_body_needs_capture">点此打开应用重新授权，否则控制端只能看到错误</string>
     <string name="notification_stop">停止</string>
     <string name="controls_handle_desc">显示控制栏</string>
+    <string name="controls_handle_label">▲ 控制栏</string>
+    <string name="controls_hint_tap">轻点画面即可唤出控制栏</string>
     <string name="invalid_server">服务器地址无效，请使用 http:// 或 https:// 地址</string>
     <string name="invalid_token">访问令牌至少需要 16 个字符</string>
     <string name="invalid_device_name">设备名称不能为空</string>

@@ -7,6 +7,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -21,6 +22,7 @@ import com.yuesf.remotecontrol.webrtc.WebRtcEngine
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.webrtc.RendererCommon
+import kotlin.math.abs
 import kotlin.math.max
 
 class RemoteSessionActivity : AppCompatActivity() {
@@ -35,6 +37,9 @@ class RemoteSessionActivity : AppCompatActivity() {
     private var downX = 0f
     private var downY = 0f
     private var downAt = 0L
+
+    /** 判定「轻点」的位移阈值，超过就算滑动，直接转发给远端。 */
+    private val touchSlop by lazy { ViewConfiguration.get(this).scaledTouchSlop }
 
     private val timeoutHandler = Handler(Looper.getMainLooper())
 
@@ -144,7 +149,16 @@ class RemoteSessionActivity : AppCompatActivity() {
 
                 MotionEvent.ACTION_UP -> {
                     val duration = SystemClock.elapsedRealtime() - downAt
-                    sendGesture(downX, downY, event.x, event.y, duration)
+                    val moved = abs(event.x - downX) + abs(event.y - downY) > touchSlop
+                    // 控制栏收起时，轻点画面先把控制栏叫回来，这一次点击不转发。
+                    // 否则用户连「返回 / 主页 / 关闭」都点不到——之前只留了个小把手，
+                    // 实际根本没人能发现，等于连上之后就退不出去了。
+                    // 只拦「短按 + 没移动」，滑动和长按照常送到远端，不影响正常操作。
+                    if (!controlsVisible && !moved && duration < TAP_TO_REVEAL_MS) {
+                        showControls()
+                    } else {
+                        sendGesture(downX, downY, event.x, event.y, duration)
+                    }
                     true
                 }
 
@@ -414,7 +428,13 @@ class RemoteSessionActivity : AppCompatActivity() {
         /** 握手回执的上限。超过它基本可以判定 B 端的应用层根本没在处理消息。 */
         private const val ACK_TIMEOUT_MS = 6_000L
 
-        /** 连上之后控制栏停留多久再收起。留一点时间让用户确认「已连接」。 */
-        private const val AUTO_HIDE_DELAY_MS = 2_500L
+        /**
+         * 连上之后控制栏停留多久再收起。
+         * 2.5 秒太赶，用户还没看清有哪些按钮就没了；5 秒够确认一眼，也不至于长时间挡画面。
+         */
+        private const val AUTO_HIDE_DELAY_MS = 5_000L
+
+        /** 超过这个时长的按压算长按，不做「唤出控制栏」的拦截，照常转发给远端。 */
+        private const val TAP_TO_REVEAL_MS = 300L
     }
 }
