@@ -11,6 +11,7 @@
         android:layout_gravity="center" />
 
     <LinearLayout
+        android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
@@ -95,5 +96,20 @@
             android:textAllCaps="false"
             android:textColor="#FFFFFF" />
     </LinearLayout>
+
+    <!--
+        控制栏隐藏后唯一可点的东西：连通时全屏都是远端画面，
+        没有把手用户就再也唤不出「返回 / 关闭」，只能杀掉进程。
+        做得够小、够淡，避免挡住远端画面底部的操作。
+    -->
+    <View
+        android:id="@+id/controlsHandle"
+        android:layout_width="96dp"
+        android:layout_height="24dp"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/bg_controls_handle"
+        android:contentDescription="@string/controls_handle_desc"
+        android:visibility="gone" />
 
 </FrameLayout>

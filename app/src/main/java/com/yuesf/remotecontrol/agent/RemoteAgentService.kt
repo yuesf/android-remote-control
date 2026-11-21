@@ -97,6 +97,7 @@ class RemoteAgentService : Service() {
                 // 并让它常驻（会话结束时也不停），把投影保住。
                 capture.startCapture()
                 isCaptureAuthorized = true
+                refreshNotification()
             }
         }
         isRunning = true
@@ -129,6 +130,18 @@ class RemoteAgentService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    /**
+     * 用户从最近任务里划掉 App 时触发。
+     *
+     * `stopWithTask="false"` 已经保证系统不会跟着把服务停掉，这里不主动 stopSelf，
+     * 服务与信令连接继续存活，A 端随时能连进来——这正是无人值守要的效果。
+     * 留一条日志是为了以后排查「划掉之后到底还活着没有」。
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.i(TAG, "task removed, foreground service stays online")
+        super.onTaskRemoved(rootIntent)
+    }
 
     private fun handleRemoteSignal(signal: RemoteSignal) {
         val payload = signal.payload
@@ -299,14 +312,33 @@ class RemoteAgentService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_remote)
-            .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_body))
+            // 采集没就绪时直接说出来：进程被杀重启后投影授权必然失效，
+            // 这时服务还在线、A 也能连上，但画面一定是黑的，光看通知看不出任何异常。
+            .setContentTitle(
+                getString(
+                    if (capture.isReady()) R.string.notification_title
+                    else R.string.notification_title_needs_capture,
+                ),
+            )
+            .setContentText(
+                getString(
+                    if (capture.isReady()) R.string.notification_body
+                    else R.string.notification_body_needs_capture,
+                ),
+            )
             .setContentIntent(openApp)
             .addAction(0, getString(R.string.notification_stop), stopService)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
+
+    /** 授权状态变化后刷新常驻通知，避免通知一直停留在旧文案。 */
+    private fun refreshNotification() {
+        runCatching {
+            getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification())
+        }
     }
 
     private fun createNotificationChannel() {

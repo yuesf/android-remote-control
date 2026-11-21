@@ -5,8 +5,10 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -103,6 +105,62 @@ class MainActivity : AppCompatActivity() {
         bindActions()
         observeSignaling()
         renderRole()
+        autoStartIfConfigured()
+    }
+
+    /**
+     * 打开 App 就恢复上次保存的角色与连接。
+     *
+     * 以前必须手动点一次「保存并启动」——进程被杀掉再打开，界面上一切正常，
+     * 但服务没起来、信令没连，A 端看到的就是「设备离线」，很像程序坏了。
+     */
+    private fun autoStartIfConfigured() {
+        val config = preferences.loadConfig() ?: return
+        when (config.role) {
+            DeviceRole.AGENT -> {
+                if (RemoteAgentService.isRunning) {
+                    return
+                }
+                requestNotificationPermissionIfNeeded()
+                ensureBatteryOptimizationIgnored()
+                runCatching { RemoteAgentService.start(this) }
+                    .onFailure { error ->
+                        toast(
+                            getString(
+                                R.string.agent_start_failed,
+                                error.message ?: error.javaClass.simpleName,
+                            ),
+                        )
+                    }
+                binding.connectionStatusText.text = getString(R.string.status_connecting)
+            }
+
+            DeviceRole.CONTROLLER -> {
+                if (SignalingRepository.state.value.phase != ConnectionPhase.ONLINE) {
+                    SignalingRepository.connect(config)
+                }
+            }
+        }
+    }
+
+    /**
+     * 被控端必须进电池白名单，否则息屏进 Doze 后进程被冻结，
+     * 信令定时掉线，A 端看到的就是「设备时有时无」。
+     * 已豁免时系统不会再弹，所以放在自动启动里也不会反复打扰。
+     */
+    private fun ensureBatteryOptimizationIgnored() {
+        val powerManager = getSystemService(PowerManager::class.java) ?: return
+        if (powerManager.isIgnoringBatteryOptimizations(packageName)) {
+            return
+        }
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }.onFailure { toast(getString(R.string.settings_unavailable)) }
     }
 
     /**
@@ -349,6 +407,10 @@ class MainActivity : AppCompatActivity() {
         }
         val service = if (RemoteAgentService.isRunning) "运行中" else "未启动"
         val capture = if (RemoteAgentService.isCaptureAuthorized) "就绪" else "未授权"
+        val battery = getSystemService(PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(packageName)
+            ?.let { if (it) "已豁免" else "受限" }
+            ?: "未知"
         binding.diagnosticsText.text = buildString {
             append("诊断：WS ").append(ws)
             append(" / 界面收到 ").append(signalCount).append(" 条（最后 ").append(lastSignalDesc).append("）")
@@ -357,6 +419,7 @@ class MainActivity : AppCompatActivity() {
             append(" / ack=").append(RemoteAgentService.lastAckResult?.toString() ?: "无")
             append(" / 服务 ").append(service)
             append(" / 采集 ").append(capture)
+            append(" / 电池 ").append(battery)
             append(" / 错误 ").append(lastErrorDesc)
         }
     }
@@ -432,6 +495,7 @@ class MainActivity : AppCompatActivity() {
                     ),
                 )
             }
+        ensureBatteryOptimizationIgnored()
         binding.connectionStatusText.text = getString(R.string.status_connecting)
         renderRole()
     }

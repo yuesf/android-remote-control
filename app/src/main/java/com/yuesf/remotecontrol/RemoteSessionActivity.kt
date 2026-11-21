@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -36,6 +37,12 @@ class RemoteSessionActivity : AppCompatActivity() {
     private var downAt = 0L
 
     private val timeoutHandler = Handler(Looper.getMainLooper())
+
+    /** 控制栏当前是否展开。连通后自动收起，只留一个把手。 */
+    private var controlsVisible = true
+
+    /** 连通后延时收起控制栏：画面本身就够看了，工具栏一直压着反而碍事。 */
+    private val autoHideControls = Runnable { setControlsVisible(false) }
 
     /**
      * 请求发出后对方可能一直不响应（B 端服务在、但无障碍没开或屏幕采集未授权，
@@ -97,6 +104,7 @@ class RemoteSessionActivity : AppCompatActivity() {
     override fun onDestroy() {
         timeoutHandler.removeCallbacks(ackTimeout)
         timeoutHandler.removeCallbacks(requestTimeout)
+        timeoutHandler.removeCallbacks(autoHideControls)
         if (::session.isInitialized) {
             if (requestSent) {
                 SignalingRepository.sendSignal(
@@ -117,6 +125,13 @@ class RemoteSessionActivity : AppCompatActivity() {
         binding.backButton.setOnClickListener { sendGlobalAction("back") }
         binding.homeButton.setOnClickListener { sendGlobalAction("home") }
         binding.recentsButton.setOnClickListener { sendGlobalAction("recents") }
+
+        // 隐藏时唯一的操作入口。收起用 GONE 而不是 alpha=0，
+        // 否则透明控件仍会吃掉远端画面的触摸。
+        binding.controlsHandle.setOnClickListener {
+            timeoutHandler.removeCallbacks(autoHideControls)
+            setControlsVisible(!controlsVisible)
+        }
 
         binding.remoteVideoView.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -319,13 +334,17 @@ class RemoteSessionActivity : AppCompatActivity() {
         when {
             status == "connected" || status == "peer-state:CONNECTED" -> {
                 binding.sessionStatus.setText(R.string.remote_session_connected)
+                scheduleControlsAutoHide()
             }
 
             status == "video-track" -> {
                 binding.sessionStatus.setText(R.string.remote_session_connected)
+                scheduleControlsAutoHide()
             }
 
             status.startsWith("error:") -> {
+                // 出错了必须让控制栏回来，否则用户连「关闭」都点不到。
+                showControls()
                 val code = status.removePrefix("error:")
                 val message = if (code == "CAPTURE_AUTH_REQUIRED") {
                     getString(R.string.screen_capture_required)
@@ -336,15 +355,52 @@ class RemoteSessionActivity : AppCompatActivity() {
             }
 
             status == "closed:remote-ended" || status == "peer-state:CLOSED" -> {
+                showControls()
                 binding.sessionStatus.setText(R.string.remote_session_closed)
             }
 
             status == "peer-state:FAILED" -> {
+                showControls()
                 binding.sessionStatus.text = getString(
                     R.string.remote_session_error,
                     "peer connection failed",
                 )
             }
+        }
+    }
+
+    private fun scheduleControlsAutoHide() {
+        timeoutHandler.removeCallbacks(autoHideControls)
+        timeoutHandler.postDelayed(autoHideControls, AUTO_HIDE_DELAY_MS)
+    }
+
+    /** 出错或断线时把控制栏拉回来，并取消尚未触发的自动收起。 */
+    private fun showControls() {
+        timeoutHandler.removeCallbacks(autoHideControls)
+        setControlsVisible(true)
+    }
+
+    private fun setControlsVisible(visible: Boolean) {
+        if (controlsVisible == visible) {
+            return
+        }
+        controlsVisible = visible
+        val bars = listOf(binding.topBar, binding.controlBar)
+        if (visible) {
+            bars.forEach { bar ->
+                bar.visibility = View.VISIBLE
+                bar.alpha = 0f
+                bar.animate().alpha(1f).setDuration(160).start()
+            }
+            binding.controlsHandle.visibility = View.GONE
+        } else {
+            // 直接 GONE：alpha=0 的控件依然会拦截远端画面的触摸事件。
+            bars.forEach { bar ->
+                bar.animate().cancel()
+                bar.alpha = 1f
+                bar.visibility = View.GONE
+            }
+            binding.controlsHandle.visibility = View.VISIBLE
         }
     }
 
@@ -357,5 +413,8 @@ class RemoteSessionActivity : AppCompatActivity() {
 
         /** 握手回执的上限。超过它基本可以判定 B 端的应用层根本没在处理消息。 */
         private const val ACK_TIMEOUT_MS = 6_000L
+
+        /** 连上之后控制栏停留多久再收起。留一点时间让用户确认「已连接」。 */
+        private const val AUTO_HIDE_DELAY_MS = 2_500L
     }
 }
