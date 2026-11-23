@@ -23,6 +23,7 @@ export class DeviceRegistry {
     role: DeviceRole,
     deviceName: string,
     sink: DeviceSink,
+    pairCode?: string,
   ): RegisteredDevice {
     const previous = this.devices.get(deviceId);
     if (previous && previous.sink !== sink) {
@@ -38,6 +39,7 @@ export class DeviceRegistry {
       deviceId,
       role,
       deviceName,
+      pairCode,
       connectedAt: now,
       lastSeenAt: now,
       sink,
@@ -70,6 +72,16 @@ export class DeviceRegistry {
 
   find(deviceId: string): RegisteredDevice | undefined {
     return this.devices.get(deviceId);
+  }
+
+  /** 按两位配对码找在线设备。码可能属于一台离线设备，这里只回答「在线的是哪台」。 */
+  findByPairCode(pairCode: string): RegisteredDevice | undefined {
+    for (const device of this.devices.values()) {
+      if (device.pairCode === pairCode) {
+        return device;
+      }
+    }
+    return undefined;
   }
 
   listPublic(): PublicDevice[] {

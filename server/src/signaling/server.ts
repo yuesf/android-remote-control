@@ -5,6 +5,7 @@ import type { AppConfig } from "../config.js";
 import type { Logger } from "../shared/logger.js";
 import { SignalingHub } from "./hub.js";
 import { MAX_MISSED_HEARTBEATS, nextDelayMs } from "./heartbeat-policy.js";
+import { PairingCodeStore } from "./pairing.js";
 import type { DeviceRegistry } from "./registry.js";
 import { isBearerAuthorized } from "../http/auth.js";
 
@@ -43,11 +44,15 @@ export function attachSignalingServer(
     noServer: true,
     maxPayload: config.maxWebSocketPayloadBytes,
   });
+  const pairing = new PairingCodeStore(config.pairingCodeFile);
+  logger.info("Pairing code store ready", { file: config.pairingCodeFile, assigned: pairing.size });
+
   const hub = new SignalingHub({
     registry,
     logger,
     maximumMessageBytes: config.maxWebSocketPayloadBytes,
     iceServers: config.iceServers,
+    pairing,
   });
 
   webSocketServer.on("connection", (socket: HeartbeatSocket, request: IncomingMessage) => {

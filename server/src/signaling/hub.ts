@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import type { IceServerSetting } from "../config.js";
 import type { Logger } from "../shared/logger.js";
 import { parseClientMessage, type ClientMessage } from "./protocol.js";
+import type { PairingCodeStore } from "./pairing.js";
 import { DeviceRegistry, type DeviceSink } from "./registry.js";
 
 interface HubOptions {
@@ -10,6 +11,8 @@ interface HubOptions {
   logger: Logger;
   maximumMessageBytes: number;
   iceServers?: IceServerSetting[];
+  /** 两位配对码分配表。缺省时退化为「不分配」，仅为兼容旧测试。 */
+  pairing?: PairingCodeStore;
 }
 
 export class SignalingHub {
@@ -75,11 +78,24 @@ export class SignalingHub {
           return;
         }
 
+        // 配对码在首次注册时领取，此后固定不变；分配失败（码池满）不阻断注册，
+        // 只是这台设备暂时无法被「按码」找到。
+        let pairCode: string | undefined;
+        try {
+          pairCode = this.options.pairing?.assign(message.deviceId, message.deviceName).code;
+        } catch (error) {
+          this.options.logger.warn("Pairing code assignment failed", {
+            deviceId: message.deviceId,
+            error: error instanceof Error ? error.message : "unknown error",
+          });
+        }
+
         const device = this.options.registry.register(
           message.deviceId,
-          message.role,
+          message.role ?? "agent",
           message.deviceName,
           sink,
+          pairCode,
         );
         registeredDeviceId = message.deviceId;
         registeredSink = sink;
@@ -88,12 +104,14 @@ export class SignalingHub {
           deviceId: device.deviceId,
           role: device.role,
           deviceName: device.deviceName,
+          pairCode: device.pairCode ?? "-",
           remoteAddress: peer,
         });
 
         send({
           type: "ready",
           deviceId: device.deviceId,
+          pairCode: device.pairCode ?? null,
           connectedAt: device.connectedAt,
           iceServers: this.options.iceServers ?? [],
         });
@@ -111,6 +129,26 @@ export class SignalingHub {
 
       if (message.type === "list_devices") {
         send({ type: "devices", devices: this.options.registry.listPublic() });
+        return;
+      }
+
+      // 按配对码寻址：客户端只需要「输两位数字」，deviceId 永远不暴露给用户。
+      // 码有效但设备离线时照样返回 deviceId，让客户端能区分
+      // 「码不存在」和「这台设备现在没上线」——两者的提示完全不同。
+      if (message.type === "resolve_code") {
+        const assignment = this.options.pairing?.resolve(message.code);
+        if (!assignment) {
+          sendError("CODE_NOT_FOUND", "没有设备使用这个配对码");
+          return;
+        }
+        const online = this.options.registry.findByPairCode(message.code);
+        send({
+          type: "code-resolved",
+          code: message.code,
+          deviceId: assignment.deviceId,
+          deviceName: online?.deviceName ?? assignment.deviceName,
+          online: online !== undefined,
+        });
         return;
       }
 

@@ -3,11 +3,22 @@ import { z } from "zod";
 export const deviceRoleSchema = z.enum(["controller", "agent"]);
 export type DeviceRole = z.infer<typeof deviceRoleSchema>;
 
+/**
+ * role 保留为可选字段只为兼容旧版 APK。
+ * 新版客户端不再区分「控制端/被控端」——每台设备随时可以被控，也随时可以控别人，
+ * 身份由「谁发起了 control-request」决定，而不是由设备本身申报。
+ */
 export const registerMessageSchema = z.object({
   type: z.literal("register"),
   deviceId: z.string().uuid(),
-  role: deviceRoleSchema,
+  role: deviceRoleSchema.optional(),
   deviceName: z.string().trim().min(1).max(64),
+});
+
+export const resolveCodeMessageSchema = z.object({
+  type: z.literal("resolve_code"),
+  /** 两位配对码，00–99。前导零有意义，必须是字符串。 */
+  code: z.string().trim().regex(/^\d{2}$/, "配对码必须是两位数字"),
 });
 
 export const listDevicesMessageSchema = z.object({
@@ -27,6 +38,7 @@ export const pingMessageSchema = z.object({
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
   registerMessageSchema,
+  resolveCodeMessageSchema,
   listDevicesMessageSchema,
   signalMessageSchema,
   pingMessageSchema,
@@ -39,6 +51,8 @@ export interface PublicDevice {
   deviceId: string;
   role: DeviceRole;
   deviceName: string;
+  /** 两位配对码。连接时用它寻址，比 deviceId 好念也好记。 */
+  pairCode?: string;
   connectedAt: string;
   /**
    * 最后一次收到该设备存活证据的时间（ISO）。

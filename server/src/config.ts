@@ -13,6 +13,8 @@ export interface AppConfig {
   maxWebSocketPayloadBytes: number;
   logLevel: LogLevel;
   iceServers: IceServerSetting[];
+  /** 两位配对码分配表的落盘位置，重启后码必须保持不变。 */
+  pairingCodeFile: string;
 }
 
 const validLogLevels = new Set<LogLevel>(["debug", "info", "warn", "error"]);
@@ -90,5 +92,6 @@ export function loadConfig(): AppConfig {
     maxWebSocketPayloadBytes: readInteger("MAX_WS_PAYLOAD_BYTES", 262_144, 1024, 4_194_304),
     logLevel: logLevelValue as LogLevel,
     iceServers: readIceServers(),
+    pairingCodeFile: process.env.PAIRING_CODE_FILE?.trim() || "data/pairing-codes.json",
   };
 }
