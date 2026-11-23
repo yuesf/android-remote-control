@@ -5,7 +5,17 @@ import android.os.SystemClock
 /**
  * 屏幕采集授权框的「代点」开关。
  *
- * 只在我们自己刚拉起授权界面后的 [WINDOW_MS] 时间窗内生效。这一点不能省：
+ * 两种模式，区别只有一个：**弹窗要不要交给无障碍代点**。
+ *
+ * - [armManual]：用户在设置页手动点了「授权屏幕采集」。此时人就在手机前，
+ *   弹窗应该原样留着让用户自己按「允许」。**无障碍一律不碰。**
+ *   之前的实现在这里也让无障碍代点，结果无障碍算错了坐标、点到了对话框外面，
+ *   系统把授权框当成「用户取消」直接关掉 → 回执 RESULT_CANCELED →
+ *   Toast「未授予屏幕采集权限」。用户看到的就是「弹窗自己关掉了」。
+ * - [armBackground]：后台被控服务自己拉起授权框（比如进程重启后采集凭证失效）。
+ *   这时没人守在手机前，必须由无障碍代点「允许」，否则无人值守就卡死了。
+ *
+ * 无论哪种模式，代点都只在 [WINDOW_MS] 时间窗内生效。这一点不能省：
  * 无障碍服务能读所有窗口、能点所有按钮，如果常开自动点击，
  * 别的应用弹出的「允许」「确定」也会被它点头，那就成了危险品。
  *
@@ -17,19 +27,39 @@ object CaptureAutoApprove {
     @Volatile
     private var armedAt = 0L
 
-    fun arm() {
+    /** 是否允许无障碍代点。只有后台自动路径才为 true。 */
+    @Volatile
+    private var autoClickEnabled = false
+
+    /**
+     * 手动路径：弹窗留给用户自己点「允许」。
+     * 同时把可能还在生效的后台代点关掉，避免两套逻辑抢同一个弹窗。
+     */
+    fun armManual() {
+        armedAt = 0L
+        autoClickEnabled = false
+        RemoteAccessibilityService.instance?.resetGeometryAttempts()
+    }
+
+    /** 后台路径：无人值守，允许无障碍代点确认。 */
+    fun armBackground() {
         armedAt = SystemClock.elapsedRealtime()
+        autoClickEnabled = true
         // 每次重新布防都是一次新的授权尝试，重试计数要跟着清零。
         RemoteAccessibilityService.instance?.resetGeometryAttempts()
     }
 
     fun disarm() {
         armedAt = 0L
+        autoClickEnabled = false
     }
 
+    /** 是否处于「可以让无障碍代点」的状态。手动模式下恒为 false。 */
     fun isArmed(): Boolean {
         val start = armedAt
-        return start > 0L && SystemClock.elapsedRealtime() - start <= WINDOW_MS
+        return start > 0L &&
+            autoClickEnabled &&
+            SystemClock.elapsedRealtime() - start <= WINDOW_MS
     }
 
     /** 授权框里的确认按钮文案（荣耀 MagicOS / 原生 / 英文都覆盖）。 */

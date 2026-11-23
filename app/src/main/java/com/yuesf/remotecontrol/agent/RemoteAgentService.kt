@@ -1,6 +1,7 @@
 package com.yuesf.remotecontrol.agent
 
 import android.app.AlarmManager
+import android.app.KeyguardManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -28,7 +29,6 @@ import com.yuesf.remotecontrol.MainActivity
 import com.yuesf.remotecontrol.R
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.data.AppPreferences
-import com.yuesf.remotecontrol.data.DeviceRole
 import com.yuesf.remotecontrol.data.SpaceGuard
 import com.yuesf.remotecontrol.debug.FileLog
 import com.yuesf.remotecontrol.signaling.HeartbeatPolicy
@@ -93,6 +93,21 @@ class RemoteAgentService : Service() {
         scheduleKeepAliveAlarm()
         registerNetworkMonitor()
         Log.i(TAG, "service created, subscribing signals")
+
+        // 无障碍就绪时补发一次采集授权请求。
+        //
+        // 服务启动时 onStartCommand 里已经调过 maybeAutoRequestCapture()，
+        // 但无障碍服务常常还没绑定（实测 PZ261A 上服务比无障碍早 17ms 连上），
+        // 那次会被 isConnected() 挡掉，只能干等下一个 10 分钟保活闹钟。
+        // 这里在无障碍真正就绪时补一次，采集凭证失效的机器才能立刻自愈。
+        //
+        // 注册必须是无障碍**主动找服务**（回调槽是静态的）：
+        // 服务先启动时无障碍还没连上，实例为 null，服务去注册会落空。
+        RemoteAccessibilityService.registerOnReady {
+            serviceScope.launch {
+                maybeAutoRequestCapture()
+            }
+        }
         // 系统层终止投屏时，把当前会话收掉，但服务继续在线等待下一次连接。
         capture.onProjectionStopped = {
             serviceScope.launch {
@@ -185,7 +200,7 @@ class RemoteAgentService : Service() {
         isRunning = true
 
         val config = AppPreferences(this).loadConfig()
-        if (config == null || config.role != DeviceRole.AGENT) {
+        if (config == null) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -427,6 +442,8 @@ class RemoteAgentService : Service() {
         agentSession?.close("service-stopped")
         agentSession = null
         sessionTargetId = null
+        // 撤掉无障碍回调：否则服务销毁后回调还持有它，会泄漏整个 Service。
+        RemoteAccessibilityService.unregisterOnReady()
         capture.release()
         isCaptureAuthorized = false
         isRunning = false
@@ -440,9 +457,9 @@ class RemoteAgentService : Service() {
 
         signalJob?.cancel()
         serviceScope.cancel()
-        if (AppPreferences(this).savedRoleOrNull() != DeviceRole.CONTROLLER) {
-            SignalingRepository.disconnect()
-        }
+        // 服务是信令连接的持有者（保活闹钟、网络监听都挂在它上面），
+        // 服务停掉就没人维护这条连接了，必须一起断开。
+        SignalingRepository.disconnect()
         super.onDestroy()
     }
 
@@ -472,11 +489,16 @@ class RemoteAgentService : Service() {
                 // 端到端握手：先回执，再去做建 PeerConnection 这类慢操作。
                 // 有了这一条，A 才能区分「B 压根没收到」和「B 收到了但建连失败」——
                 // 否则只能靠超时盲猜，且两种故障在界面上完全一样。
+                // 顺带把锁屏态带过去：B 若设了密码，密码键盘是安全窗口，
+                // A 那边看到的是黑屏，必须提前告诉用户「用解锁面板」而不是「画面坏了」。
+                val keyguard = getSystemService(KeyguardManager::class.java)
                 val acked = SignalingRepository.sendSignal(
                     signal.fromDeviceId,
                     JSONObject()
                         .put("kind", "control-ack")
-                        .put("protocolVersion", 1),
+                        .put("protocolVersion", 1)
+                        .put("locked", keyguard?.isKeyguardLocked ?: false)
+                        .put("secure", keyguard?.isDeviceSecure ?: false),
                 )
                 lastAckResult = acked
                 FileLog.append("control-ack sent=$acked")
@@ -564,6 +586,9 @@ class RemoteAgentService : Service() {
             },
             onStatus = { status -> Log.d(TAG, "RTC status: $status") },
             onSessionClosed = { reason ->
+                // 会话无论怎么结束（对端挂断、超时、链路失败），都把
+                // 「被控制」角标切到「控制已关闭」，让机主知情。
+                RemoteAccessibilityService.showControlEnded()
                 if (reason != "remote-end") {
                     SignalingRepository.sendSignal(
                         controllerDeviceId,
@@ -579,6 +604,10 @@ class RemoteAgentService : Service() {
                     // 会话结束就回空闲档：停满规格出帧、放掉 Wi-Fi 高性能锁。
                     scheduleIdle()
                 }
+            },
+            onPeerConnected = {
+                // WebRTC 连上才算真的「被控制」：亮出常驻角标让机主知情。
+                RemoteAccessibilityService.showControlActive()
             },
         )
         agentSession = session

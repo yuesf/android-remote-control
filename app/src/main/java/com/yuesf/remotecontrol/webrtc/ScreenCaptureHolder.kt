@@ -266,9 +266,17 @@ class ScreenCaptureHolder {
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(metrics)
-        val scale = min(1f, MAX_CAPTURE_DIMENSION / maxOf(metrics.widthPixels, metrics.heightPixels).toFloat())
-        val width = ((metrics.widthPixels * scale).toInt() and -2).coerceAtLeast(2)
-        val height = ((metrics.heightPixels * scale).toInt() and -2).coerceAtLeast(2)
+        val w = metrics.widthPixels
+        val h = metrics.heightPixels
+        // 清晰度的关键在**短边**：竖屏手机的文字沿宽度方向排布，
+        // 短边缩到 486（旧策略 1080 上限对 1080x2400 的结果）文字必然糊。
+        // 保证短边 ≥ [MIN_SHORT_EDGE]，同时长边不超过 [MAX_LONG_EDGE] 控住编码负载。
+        val scale = min(
+            MAX_LONG_EDGE / maxOf(w, h).toFloat(),
+            MIN_SHORT_EDGE / minOf(w, h).toFloat(),
+        ).coerceAtMost(1f)
+        val width = ((w * scale).toInt() and -2).coerceAtLeast(2)
+        val height = ((h * scale).toInt() and -2).coerceAtLeast(2)
         return width to height
     }
 
@@ -277,11 +285,16 @@ class ScreenCaptureHolder {
         private const val SCREEN_TRACK_ID = "screen0"
 
         /**
-         * 会话档：1080 宽足够看清手机界面上的文字，H.264 编码负载比 1280 低约三成；
-         * 帧率 12fps——屏幕共享不需要 30fps，省下的是编码器功耗与发热。
+         * 会话档帧率：20fps 下滑动/滚动基本无拖影感，编码功耗仍在可控范围
+         * （屏幕内容变化才真正出帧，静态界面编码器负载远低于标称值）。
          */
-        private const val SESSION_FPS = 12
-        private const val MAX_CAPTURE_DIMENSION = 1080f
+        private const val SESSION_FPS = 20
+
+        /** 会话档长边上限：1080x2400 → 720x1600，1200x2670 → 720x1602。 */
+        private const val MAX_LONG_EDGE = 1600f
+
+        /** 会话档短边下限：保证竖屏宽度不低于 720，文字才清晰。 */
+        private const val MIN_SHORT_EDGE = 720f
 
         /**
          * 空闲档：1fps 只是为了让投影「看起来还在投」，够它不被系统回收；

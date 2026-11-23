@@ -40,7 +40,10 @@ class CaptureRequestActivity : AppCompatActivity() {
         // 权限前置条件由发起方（RemoteAgentService）负责校验：
         // 本 Activity 既然已经被启动起来，说明后台启动这一步已经通过了，
         // 再检查一遍只会让 adb / 其它入口的调用无谓失败。
-        CaptureAutoApprove.arm()
+        //
+        // 后台路径：这时没人守在手机前，必须由无障碍代点「允许」，
+        // 否则无人值守就卡死在授权框上。
+        CaptureAutoApprove.armBackground()
         runCatching {
             val manager = getSystemService(MediaProjectionManager::class.java)
             captureLauncher.launch(manager.createScreenCaptureIntent())
