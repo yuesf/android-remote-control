@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 左侧手机 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M8,1h6a2,2 0,0 1,2 2v18a2,2 0,0 1,-2 2H8a2,2 0,0 1,-2 -2V3a2,2 0,0 1,2 -2zM8,3v16h6V3H8zM10,20.5h2v-1h-2v1z" />
+    <!-- 右侧设备清单 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M17,5h5v2h-5zM17,9h5v2h-5zM17,13h5v2h-5z" />
+</vector>

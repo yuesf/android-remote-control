@@ -38,6 +38,20 @@ class SessionWakeActivity : AppCompatActivity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // 本 Activity 只是用来「点亮屏幕 + 保持常亮」，不该参与任何交互。
+        //
+        // 不加这两个 flag 的后果实测过：它虽然透明，但窗口仍然接得住触摸，
+        // 于是所有注入的滑动/点击都落在它身上——锁屏纹丝不动，看起来就是
+        // 「B 加了密码之后就滑不开了」。会话结束后本 Activity 释放，
+        // 同一个 swipe 立刻就能把密码键盘拉出来，这就是铁证。
+        //
+        // FLAG_NOT_TOUCHABLE 让事件穿透到下一层（锁屏，或已解锁时的桌面 App），
+        // FLAG_NOT_FOCUSABLE 让它不抢焦点，免得把锁屏的输入法焦点顶掉。
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+        )
+
         instance = this
         dismissLockIfPossible()
         FileLog.append("session wake: screen on")

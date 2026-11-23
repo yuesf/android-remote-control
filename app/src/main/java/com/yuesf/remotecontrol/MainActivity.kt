@@ -12,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.View
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -33,10 +34,10 @@ import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.agent.RemoteAgentService
 import com.yuesf.remotecontrol.data.AppPreferences
 import com.yuesf.remotecontrol.debug.FileLog
-import com.yuesf.remotecontrol.data.DeviceRole
 import com.yuesf.remotecontrol.data.SpaceGuard
 import com.yuesf.remotecontrol.data.normalizeServerUrl
 import com.yuesf.remotecontrol.databinding.ActivityMainBinding
+import com.yuesf.remotecontrol.signaling.CodeResolution
 import com.yuesf.remotecontrol.signaling.ConnectionPhase
 import com.yuesf.remotecontrol.signaling.DeviceInfo
 import com.yuesf.remotecontrol.signaling.HeartbeatPolicy
@@ -52,11 +53,13 @@ import java.util.Locale
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var preferences: AppPreferences
-    private var suppressRoleCallback = false
 
     private var signalCount = 0
     private var lastSignalDesc = "无"
     private var lastErrorDesc = "无"
+
+    /** 正在解析的配对码：服务端回 code-resolved 时用它过滤掉残留/他人的结果。 */
+    private var pendingPairCode: String? = null
 
     /** 悬浮窗权限引导同一次运行只弹一次。 */
     private var overlayPromptShown = false
@@ -114,7 +117,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             toast(getString(R.string.capture_permission_denied))
         }
-        renderRole()
+        renderSections()
     }
 
     private val scanPairingLauncher = registerForActivityResult(ScanContract()) { result ->
@@ -139,44 +142,37 @@ class MainActivity : AppCompatActivity() {
         renderBuildInfo()
         bindActions()
         observeSignaling()
-        renderRole()
+        renderSections()
         autoStartIfConfigured()
     }
 
     /**
-     * 打开 App 就恢复上次保存的角色与连接。
+     * 打开 App 就恢复连接并拉起被控服务。
      *
-     * 以前必须手动点一次「保存并启动」——进程被杀掉再打开，界面上一切正常，
-     * 但服务没起来、信令没连，A 端看到的就是「设备离线」，很像程序坏了。
+     * 改造后不再区分角色：每台设备都必须常驻「可被控」能力（信令 + 采集 + 无障碍），
+     * 否则对方输你的配对码也连不上；同时控制别人的能力在需要时才动用。
+     * 以前按角色二选一，导致控制端机器上根本没有被控服务，反过来连它就连不上。
      */
     private fun autoStartIfConfigured() {
         val config = preferences.loadConfig() ?: return
-        when (config.role) {
-            DeviceRole.AGENT -> {
-                if (RemoteAgentService.isRunning) {
-                    return
+        requestNotificationPermissionIfNeeded()
+        ensureBatteryOptimizationIgnored()
+        ensureOverlayPermission()
+        if (!RemoteAgentService.isRunning) {
+            runCatching { RemoteAgentService.start(this) }
+                .onFailure { error ->
+                    toast(
+                        getString(
+                            R.string.agent_start_failed,
+                            error.message ?: error.javaClass.simpleName,
+                        ),
+                    )
                 }
-                requestNotificationPermissionIfNeeded()
-                ensureBatteryOptimizationIgnored()
-                ensureOverlayPermission()
-                runCatching { RemoteAgentService.start(this) }
-                    .onFailure { error ->
-                        toast(
-                            getString(
-                                R.string.agent_start_failed,
-                                error.message ?: error.javaClass.simpleName,
-                            ),
-                        )
-                    }
-                binding.connectionStatusText.text = getString(R.string.status_connecting)
-            }
-
-            DeviceRole.CONTROLLER -> {
-                if (SignalingRepository.state.value.phase != ConnectionPhase.ONLINE) {
-                    SignalingRepository.connect(config)
-                }
-            }
         }
+        if (SignalingRepository.state.value.phase != ConnectionPhase.ONLINE) {
+            SignalingRepository.connect(config)
+        }
+        binding.connectionStatusText.setText(R.string.status_connecting)
     }
 
     /**
@@ -228,11 +224,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
         renderDiagnostics()
-        renderRole()
+        renderSections()
         renderAccessibilityStatus()
-        if (currentRoleOrNull() == DeviceRole.CONTROLLER &&
-            SignalingRepository.state.value.phase == ConnectionPhase.ONLINE
-        ) {
+        if (SignalingRepository.state.value.phase == ConnectionPhase.ONLINE) {
             SignalingRepository.refreshDevices()
         }
         presenceHandler.removeCallbacks(presenceTicker)
@@ -248,71 +242,27 @@ class MainActivity : AppCompatActivity() {
         binding.serverUrlInput.setText(preferences.savedServerUrl())
         binding.tokenInput.setText(preferences.savedAuthToken())
         binding.deviceNameInput.setText(preferences.savedDeviceName())
-        when (preferences.savedRoleOrNull()) {
-            DeviceRole.AGENT -> setRoleSelection(DeviceRole.AGENT)
-            DeviceRole.CONTROLLER -> setRoleSelection(DeviceRole.CONTROLLER)
-            null -> Unit
-        }
-    }
-
-    /**
-     * 程序化勾选角色时不触发切换副作用，避免界面还原被当成用户操作。
-     */
-    private fun setRoleSelection(role: DeviceRole) {
-        suppressRoleCallback = true
-        when (role) {
-            DeviceRole.AGENT -> binding.agentRoleButton.isChecked = true
-            DeviceRole.CONTROLLER -> binding.controllerRoleButton.isChecked = true
-        }
-        suppressRoleCallback = false
-    }
-
-    /**
-     * 角色切换立即生效：同一台手机不能同时以被控端和控制端身份在线。
-     * 切到控制端必须停掉被控服务并重连；切到被控端必须放开控制端连接。
-     */
-    private fun applyRoleChange(role: DeviceRole) {
-        preferences.saveRole(role)
-        val agentWasRunning = RemoteAgentService.isRunning
-
-        if (role == DeviceRole.CONTROLLER) {
-            if (agentWasRunning) {
-                RemoteAgentService.stop(this)
-            }
-            SignalingRepository.disconnect()
-            preferences.loadConfig()?.let { SignalingRepository.connect(it) }
-            if (agentWasRunning) {
-                toast(getString(R.string.role_switched_to_controller))
-            }
-        } else {
-            if (!agentWasRunning) {
-                SignalingRepository.disconnect()
-                val ready = preferences.loadConfig() != null
-                toast(
-                    getString(
-                        if (ready) {
-                            R.string.role_switched_to_agent
-                        } else {
-                            R.string.role_switched_to_agent_need_config
-                        },
-                    ),
-                )
-            }
-        }
-        renderRole()
     }
 
     private fun bindActions() {
-        binding.roleGroup.setOnCheckedChangeListener { _, checkedId ->
-            if (suppressRoleCallback) {
-                return@setOnCheckedChangeListener
+        binding.bottomNav.setOnItemSelectedListener { item ->
+            when (item.itemId) {
+                R.id.nav_home -> showPage(PAGE_HOME)
+                R.id.nav_devices -> showPage(PAGE_DEVICES)
+                R.id.nav_settings -> showPage(PAGE_SETTINGS)
+                else -> return@setOnItemSelectedListener false
             }
-            val role = when (checkedId) {
-                R.id.agentRoleButton -> DeviceRole.AGENT
-                R.id.controllerRoleButton -> DeviceRole.CONTROLLER
-                else -> return@setOnCheckedChangeListener
-            }
-            applyRoleChange(role)
+            true
+        }
+        showPage(PAGE_HOME)
+
+        binding.connectByCodeButton.setOnClickListener {
+            connectByPairCode()
+        }
+        // 输完两位数字直接回车就能连，不用再去点按钮。
+        binding.pairCodeInput.setOnEditorActionListener { _, _, _ ->
+            connectByPairCode()
+            true
         }
 
         binding.saveButton.setOnClickListener {
@@ -325,20 +275,19 @@ class MainActivity : AppCompatActivity() {
             RemoteAgentService.stop(this)
             SignalingRepository.disconnect()
             binding.connectionStatusText.text = getString(R.string.status_disconnected)
-            renderRole()
+            renderSections()
         }
         binding.grantCaptureButton.setOnClickListener {
             val config = persistForm() ?: return@setOnClickListener
-            if (config.role != DeviceRole.AGENT) {
-                return@setOnClickListener
-            }
             requestNotificationPermissionIfNeeded()
             val manager = getSystemService(MediaProjectionManager::class.java)
-            // 与自动路径保持一致：用户点过授权按钮后，系统确认框同样交给无障碍代点，
-            // 免得「自动的不用点、手动的还要点」这种不一致。
-            CaptureAutoApprove.arm()
+            // 手动路径：弹窗原样留给用户自己按「允许」，无障碍不要碰。
+            // 之前这里也让无障碍代点，代点算错坐标就点了对话框外面，
+            // 系统当成用户取消把框关掉，用户只看到「未授予屏幕采集权限」。
+            CaptureAutoApprove.armManual()
             runCatching { capturePermissionLauncher.launch(manager.createScreenCaptureIntent()) }
-                .onFailure { toast(getString(R.string.settings_unavailable)) }        }
+                .onFailure { toast(getString(R.string.settings_unavailable)) }
+        }
         binding.showPairingQrButton.setOnClickListener {
             showPairingQr()
         }
@@ -363,6 +312,35 @@ class MainActivity : AppCompatActivity() {
         }
         binding.capabilityCheckButton.setOnClickListener {
             showCapabilityReport()
+        }
+    }
+
+    /**
+     * 三个导航页共用一个 Activity，用可见性切换，不上 Fragment。
+     *
+     * 这些页面之间没有独立的状态需要保存，切页只是换一块内容看；
+     * 用 Fragment 反而要把现有的一大堆视图引用拆散，收益为零。
+     * 切到某页时顺手把该页需要的最新数据刷一遍（设备列表 / 诊断行），
+     * 否则停在别的页面上时数据变了，切回来看到的还是旧的。
+     */
+    private fun showPage(page: Int) {
+        binding.homePage.visibility = if (page == PAGE_HOME) View.VISIBLE else View.GONE
+        binding.devicesPage.visibility = if (page == PAGE_DEVICES) View.VISIBLE else View.GONE
+        binding.settingsPage.visibility = if (page == PAGE_SETTINGS) View.VISIBLE else View.GONE
+
+        when (page) {
+            PAGE_DEVICES -> {
+                if (SignalingRepository.state.value.phase == ConnectionPhase.ONLINE) {
+                    SignalingRepository.refreshDevices()
+                }
+                renderPairCode(SignalingRepository.pairCode.value)
+                renderDevices(latestDevices)
+            }
+
+            PAGE_SETTINGS -> {
+                renderSections()
+                renderDiagnostics()
+            }
         }
     }
 
@@ -423,6 +401,15 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     SignalingRepository.devices.collect(::renderDevices)
                 }
+                launch {
+                    SignalingRepository.pairCode.collect { code ->
+                        renderPairCode(code)
+                        renderDiagnostics()
+                    }
+                }
+                launch {
+                    SignalingRepository.codeResolutions.collect(::handleCodeResolved)
+                }
                 // 现场诊断：某些机型（如荣耀）把 logcat 关了，拿不到任何日志，
                 // 只能在界面上把「有没有收到信号」这层事实直接摆出来。
                 launch {
@@ -435,6 +422,13 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     SignalingRepository.errors.collect { error ->
                         lastErrorDesc = error.code
+                        // 码输错是最常见的用户失误，必须立刻给明确反馈，
+                        // 而不是只把错误码塞进诊断行里让人自己找。
+                        if (error.code == "CODE_NOT_FOUND" && pendingPairCode != null) {
+                            pendingPairCode = null
+                            binding.pairCodeInputLayout.error =
+                                getString(R.string.pair_code_not_found)
+                        }
                         renderDiagnostics()
                     }
                 }
@@ -465,26 +459,23 @@ class MainActivity : AppCompatActivity() {
             else -> "否"
         }
         val alarm = if (RemoteAgentService.lastAlarmExact) "精确" else "降级"
-        // 只显示当前角色真正相关的项。
-        // 控制端没有服务、不采集屏幕、也不需要保活闹钟，把这些项摆上去全是「未启动/未授权/降级」，
-        // 看上去像一堆故障，反而把真正要看的「WS 在线」「界面收到几条」淹掉了。
-        val isAgent = currentRoleOrNull() == DeviceRole.AGENT
+        // 不再有角色分支：每台设备都常驻被控能力，这些指标全部相关。
+        // 以前只在被控端显示，结果控制端机器上「采集未授权」这种真问题被藏了起来。
         binding.diagnosticsText.text = buildString {
             append("诊断：WS ").append(ws)
+            append(" / 本机码 ").append(SignalingRepository.pairCode.value ?: "--")
             append(" / 界面收到 ").append(signalCount).append(" 条（最后 ").append(lastSignalDesc).append("）")
-            if (isAgent) {
-                append(" / 服务收到 ").append(RemoteAgentService.receivedSignals)
-                append(" 条（").append(RemoteAgentService.lastSignalKind).append("）")
-                append(" / ack=").append(RemoteAgentService.lastAckResult?.toString() ?: "无")
-                append(" / 服务 ").append(service)
-                append(" / 采集 ").append(capture)
-                append("（").append(RemoteAgentService.captureProfileLabel()).append("）")
-                append(" / 电池 ").append(battery)
-                append(" / Doze ").append(doze)
-                append(" / Wi-Fi锁 ").append(RemoteAgentService.wifiLockLabel())
-                append(" / 闹钟 ").append(alarm)
-                append(" / 悬浮窗 ").append(overlay)
-            }
+            append(" / 服务收到 ").append(RemoteAgentService.receivedSignals)
+            append(" 条（").append(RemoteAgentService.lastSignalKind).append("）")
+            append(" / ack=").append(RemoteAgentService.lastAckResult?.toString() ?: "无")
+            append(" / 服务 ").append(service)
+            append(" / 采集 ").append(capture)
+            append("（").append(RemoteAgentService.captureProfileLabel()).append("）")
+            append(" / 电池 ").append(battery)
+            append(" / Doze ").append(doze)
+            append(" / Wi-Fi锁 ").append(RemoteAgentService.wifiLockLabel())
+            append(" / 闹钟 ").append(alarm)
+            append(" / 悬浮窗 ").append(overlay)
             append(" / 错误 ").append(lastErrorDesc)
         }
     }
@@ -492,29 +483,15 @@ class MainActivity : AppCompatActivity() {
     private fun timeLabel(): String = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
 
     private fun saveAndApply() {
-        val config = persistForm() ?: return
-        if (config.role == DeviceRole.AGENT) {
-            requestNotificationPermissionIfNeeded()
-            startAgentService()
-        } else {
-            if (RemoteAgentService.isRunning) {
-                RemoteAgentService.stop(this)
-            }
-            SignalingRepository.connect(config)
-            renderRole()
-        }
+        persistForm() ?: return
+        requestNotificationPermissionIfNeeded()
+        startAgentService()
     }
 
     private fun persistForm() = run {
         binding.serverUrlLayout.error = null
         binding.tokenLayout.error = null
         binding.deviceNameLayout.error = null
-
-        val role = currentRoleOrNull()
-        if (role == null) {
-            toast(getString(R.string.role_required))
-            return@run null
-        }
 
         val serverUrl = binding.serverUrlInput.text?.toString()?.trim().orEmpty()
         val parsedUrl = normalizeServerUrl(serverUrl)
@@ -537,7 +514,7 @@ class MainActivity : AppCompatActivity() {
             return@run null
         }
 
-        val config = preferences.save(serverUrl, token, deviceName, role)
+        val config = preferences.save(serverUrl, token, deviceName)
         if (config == null) {
             toast(getString(R.string.config_required))
         }
@@ -545,8 +522,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startAgentService() {
-        val config = preferences.loadConfig()
-        if (config == null || config.role != DeviceRole.AGENT) {
+        if (preferences.loadConfig() == null) {
             toast(getString(R.string.agent_config_required))
             return
         }
@@ -562,8 +538,8 @@ class MainActivity : AppCompatActivity() {
             }
         ensureBatteryOptimizationIgnored()
         ensureOverlayPermission()
-        binding.connectionStatusText.text = getString(R.string.status_connecting)
-        renderRole()
+        binding.connectionStatusText.setText(R.string.status_connecting)
+        renderSections()
     }
 
     /**
@@ -606,17 +582,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun renderRole() {
-        val role = currentRoleOrNull()
-        val agent = role == DeviceRole.AGENT
-        val controller = role == DeviceRole.CONTROLLER
-        binding.roleHintText.visibility = if (role == null) TextView.VISIBLE else TextView.GONE
-        binding.agentSection.visibility = if (agent) LinearLayout.VISIBLE else LinearLayout.GONE
-        binding.controllerSection.visibility = if (controller) LinearLayout.VISIBLE else LinearLayout.GONE
+    /**
+     * 两块卡片现在都常显：这台手机既能被控（要能接别人的连接），
+     * 也能主动去控别人（输对方的码）。真正区分两者的只有「这次是往哪个方向发起」。
+     */
+    private fun renderSections() {
+        binding.agentSection.visibility = LinearLayout.VISIBLE
+        binding.controllerSection.visibility = LinearLayout.VISIBLE
         binding.startAgentButton.visibility =
-            if (agent && !RemoteAgentService.isRunning) LinearLayout.VISIBLE else LinearLayout.GONE
+            if (!RemoteAgentService.isRunning) LinearLayout.VISIBLE else LinearLayout.GONE
         binding.stopAgentButton.visibility =
-            if (agent && RemoteAgentService.isRunning) LinearLayout.VISIBLE else LinearLayout.GONE
+            if (RemoteAgentService.isRunning) LinearLayout.VISIBLE else LinearLayout.GONE
         binding.captureStatusText.setText(
             if (RemoteAgentService.isCaptureAuthorized) {
                 R.string.capture_available
@@ -624,7 +600,66 @@ class MainActivity : AppCompatActivity() {
                 R.string.capture_unavailable
             },
         )
+        renderPairCode(SignalingRepository.pairCode.value)
         renderAccessibilityStatus()
+    }
+
+    private fun renderPairCode(code: String?) {
+        binding.pairCodeText.text =
+            code ?: getString(R.string.pair_code_pending)
+    }
+
+    /**
+     * 按配对码连接。
+     *
+     * 流程是「发 resolve_code → 服务端回 code-resolved → 拿 deviceId 开会话」，
+     * 而不是本地比对设备列表：码的归属只有服务端知道，列表可能还没刷新。
+     */
+    private fun connectByPairCode() {
+        val code = binding.pairCodeInput.text?.toString()?.trim().orEmpty()
+        if (code.length != 2 || !code.all { it.isDigit() }) {
+            binding.pairCodeInputLayout.error = getString(R.string.pair_code_invalid)
+            return
+        }
+        binding.pairCodeInputLayout.error = null
+
+        if (SignalingRepository.state.value.phase != ConnectionPhase.ONLINE) {
+            toast(getString(R.string.signaling_not_connected))
+            return
+        }
+        if (code == SignalingRepository.pairCode.value) {
+            toast(getString(R.string.pair_code_self))
+            return
+        }
+
+        pendingPairCode = code
+        if (!SignalingRepository.resolveCode(code)) {
+            pendingPairCode = null
+            toast(getString(R.string.signaling_not_connected))
+        }
+    }
+
+    private fun handleCodeResolved(resolution: CodeResolution) {
+        // 只处理自己发起的那次查询；服务端或其他逻辑也可能带回结果。
+        if (pendingPairCode != null && pendingPairCode != resolution.code) {
+            return
+        }
+        pendingPairCode = null
+
+        if (!resolution.online) {
+            toast(getString(R.string.pair_code_offline, resolution.deviceName))
+            return
+        }
+        if (resolution.deviceId == preferences.deviceId) {
+            toast(getString(R.string.pair_code_self))
+            return
+        }
+        binding.pairCodeInput.setText("")
+        startActivity(
+            Intent(this, RemoteSessionActivity::class.java)
+                .putExtra(RemoteSessionActivity.EXTRA_TARGET_DEVICE_ID, resolution.deviceId)
+                .putExtra(RemoteSessionActivity.EXTRA_TARGET_DEVICE_NAME, resolution.deviceName),
+        )
     }
 
     private fun renderAccessibilityStatus() {
@@ -650,28 +685,37 @@ class MainActivity : AppCompatActivity() {
         }
         binding.connectionStatusText.text = text
 
-        if (state.phase == ConnectionPhase.ONLINE && currentRoleOrNull() == DeviceRole.CONTROLLER) {
+        if (state.phase == ConnectionPhase.ONLINE) {
             SignalingRepository.refreshDevices()
         }
         // 诊断行必须跟着连接状态刷新。之前只在「收到信号/报错」时重绘，
         // 于是重连成功后仍停在「WS 重连中」，把正常状态显示成故障。
         renderDiagnostics()
-        renderRole()
+        renderSections()
     }
 
     private fun renderDevices(devices: List<DeviceInfo>) {
         latestDevices = devices
         binding.deviceListContainer.removeAllViews()
-        val agents = devices.filter {
-            it.role == DeviceRole.AGENT && it.deviceId != preferences.deviceId
-        }
+        // 不再按角色筛：任何一台在线的其他设备都可以被连，首选入口是配对码，
+        // 但列表仍是「不知道对方码时」的兜底。
+        val others = devices.filter { it.deviceId != preferences.deviceId }
         binding.emptyDevicesText.visibility =
-            if (agents.isEmpty()) TextView.VISIBLE else TextView.GONE
+            if (others.isEmpty()) TextView.VISIBLE else TextView.GONE
 
-        for (device in agents) {
+        for (device in others) {
             val presence = presenceLabel(device)
             val button = MaterialButton(this).apply {
-                text = getString(R.string.connect_device_with_presence, device.deviceName, presence)
+                text = if (device.pairCode != null) {
+                    getString(
+                        R.string.connect_device_with_code,
+                        device.pairCode,
+                        device.deviceName,
+                        presence,
+                    )
+                } else {
+                    getString(R.string.connect_device_with_presence, device.deviceName, presence)
+                }
                 isAllCaps = false
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
@@ -725,26 +769,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun currentRoleOrNull(): DeviceRole? = when {
-        binding.agentRoleButton.isChecked -> DeviceRole.AGENT
-        binding.controllerRoleButton.isChecked -> DeviceRole.CONTROLLER
-        else -> null
-    }
-
     private fun showPairingQr() {
         val config = persistForm() ?: return
-        if (config.role != DeviceRole.AGENT) {
-            toast(getString(R.string.pairing_config_required))
-            return
-        }
 
+        // 二维码只用于「快速导入服务器配置」，不再承担角色声明——
+        // 真正决定连哪台设备的是两位配对码，扫码方连上后自己输即可。
         val payload = JSONObject()
             .put("version", 1)
             .put("server", config.serverUrl.toString().trimEnd('/'))
             .put("token", config.authToken)
-            .put("deviceId", config.deviceId)
             .put("deviceName", config.deviceName)
-            .put("role", DeviceRole.AGENT.wireValue)
+            .put("pairCode", SignalingRepository.pairCode.value)
 
         val bitmap = runCatching {
             BarcodeEncoder().encodeBitmap(payload.toString(), BarcodeFormat.QR_CODE, 720, 720)
@@ -758,9 +793,15 @@ class MainActivity : AppCompatActivity() {
             adjustViewBounds = true
             setPadding(24, 24, 24, 24)
         }
+        val pairCode = SignalingRepository.pairCode.value
+        val message = if (pairCode != null) {
+            getString(R.string.pairing_qr_prompt_with_code, pairCode)
+        } else {
+            getString(R.string.pairing_qr_prompt)
+        }
         AlertDialog.Builder(this)
             .setTitle(R.string.pairing_qr_title)
-            .setMessage(R.string.pairing_qr_prompt)
+            .setMessage(message)
             .setView(imageView)
             .setPositiveButton(R.string.close, null)
             .show()
@@ -775,7 +816,6 @@ class MainActivity : AppCompatActivity() {
 
         val server = payload.optString("server")
         val token = payload.optString("token")
-        val targetName = payload.optString("deviceName", "B 设备")
         val parsedUrl = normalizeServerUrl(server)
         if (parsedUrl == null || token.length < 16) {
             toast(getString(R.string.pairing_invalid))
@@ -784,21 +824,28 @@ class MainActivity : AppCompatActivity() {
 
         binding.serverUrlInput.setText(server)
         binding.tokenInput.setText(token)
-        setRoleSelection(DeviceRole.CONTROLLER)
 
         val ownName = preferences.savedDeviceName()
-        val config = preferences.save(server, token, ownName, DeviceRole.CONTROLLER)
+        val config = preferences.save(server, token, ownName)
         if (config == null) {
             toast(getString(R.string.pairing_invalid))
             return
         }
 
-        if (RemoteAgentService.isRunning) {
-            RemoteAgentService.stop(this)
-        }
         SignalingRepository.connect(config)
-        renderRole()
-        toast(getString(R.string.pairing_success, targetName))
+        renderSections()
+
+        // 码在二维码里就顺手填进输入框，用户点一下「连接」即可。
+        val pairCode = payload.optString("pairCode").takeIf { it.length == 2 }
+        if (pairCode != null) {
+            binding.pairCodeInput.setText(pairCode)
+            // 输入框在首页，扫完码还停在「设备」页的话用户看不到已填入，
+            // 会以为没扫上。这里直接把导航切回首页。
+            binding.bottomNav.selectedItemId = R.id.nav_home
+            toast(getString(R.string.pairing_success_with_code, pairCode))
+        } else {
+            toast(getString(R.string.pairing_success, payload.optString("deviceName", "设备")))
+        }
     }
 
     private fun openSettings(intent: Intent) {
@@ -813,5 +860,9 @@ class MainActivity : AppCompatActivity() {
     private companion object {
         /** 本地重算在线状态的节奏。不发网络请求，只是一次文本重排。 */
         const val PRESENCE_TICK_MS = 30_000L
+
+        const val PAGE_HOME = 0
+        const val PAGE_DEVICES = 1
+        const val PAGE_SETTINGS = 2
     }
 }

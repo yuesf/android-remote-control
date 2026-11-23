@@ -23,6 +23,11 @@ class SignalingClient(private val listener: Listener) {
         fun onSignalReceived(signal: RemoteSignal)
         fun onServerError(code: String, message: String)
         fun onIceServersChanged(servers: List<IceServerSpec>)
+
+        /** 服务端分配的本机两位配对码。断线后依然保留，重连也不会变。 */
+        fun onPairCodeChanged(pairCode: String?) {}
+        /** 按码查询到目标设备（含「码有效但设备离线」）。 */
+        fun onCodeResolved(resolution: CodeResolution) {}
     }
 
     /**
@@ -134,6 +139,23 @@ class SignalingClient(private val listener: Listener) {
     }
 
     fun refreshDevices(): Boolean = sendJson(JSONObject().put("type", "list_devices"))
+
+    /**
+     * 用两位配对码查目标设备。
+     * 返回 false 只代表「这条消息没发出去」（离线/没连上），不代表码无效；
+     * 码无效会走服务端错误 CODE_NOT_FOUND。
+     */
+    fun resolveCode(code: String): Boolean {
+        if (!online) {
+            FileLog.append("resolve skipped: offline code=$code")
+            return false
+        }
+        return sendJson(
+            JSONObject()
+                .put("type", "resolve_code")
+                .put("code", code.trim()),
+        )
+    }
 
     /**
      * 无条件重建连接。
@@ -339,6 +361,7 @@ class SignalingClient(private val listener: Listener) {
                     deviceId = deviceId,
                     role = DeviceRole.fromWire(item.optString("role")),
                     deviceName = deviceName,
+                    pairCode = item.optString("pairCode").takeIf { it.isNotBlank() },
                     lastSeenAt = item.optString("lastSeenAt").takeIf { it.isNotBlank() },
                 ),
             )
@@ -366,8 +389,24 @@ class SignalingClient(private val listener: Listener) {
                     online = true
                     reconnectAttempt = 0
                     dispatchIceServers(message.optJSONArray("iceServers"))
-                    Log.i(TAG, "ready: registered as ${message.optString("deviceId")}")
-                    notifyState(ConnectionPhase.ONLINE, message.optString("deviceId"))
+                    val pairCode = message.optString("pairCode").takeIf { it.isNotBlank() }
+                    val ownId = message.optString("deviceId")
+                    Log.i(TAG, "ready: registered as $ownId code=$pairCode")
+                    mainHandler.post { listener.onPairCodeChanged(pairCode) }
+                    notifyState(ConnectionPhase.ONLINE, ownId)
+                }
+
+                "code-resolved" -> {
+                    val resolution = CodeResolution(
+                        code = message.optString("code"),
+                        deviceId = message.optString("deviceId"),
+                        deviceName = message.optString("deviceName"),
+                        online = message.optBoolean("online"),
+                    )
+                    FileLog.append(
+                        "code-resolved code=${resolution.code} online=${resolution.online}",
+                    )
+                    mainHandler.post { listener.onCodeResolved(resolution) }
                 }
 
                 "devices" -> {

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 滑杆式设置图标：比齿轮在小尺寸下更清晰 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M3,6h9v2H3zM16,6h5v2h-5zM13,3h2v8h-2zM3,16h5v2H3zM12,16h9v2h-9zM9,13h2v8H9z" />
+</vector>

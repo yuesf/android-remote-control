@@ -15,12 +15,15 @@ import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
+import com.yuesf.remotecontrol.debug.FileLog
 import java.nio.ByteBuffer
 
 class ControllerRtcSession(
     private val renderer: SurfaceViewRenderer,
     private val onLocalSignal: (JSONObject) -> Unit,
     private val onStatusChanged: (String) -> Unit,
+    /** B 端通过控制通道主动推回的消息（如 pin-result）。onMessage 之前直接丢弃，解锁结果无从反馈。 */
+    private val onControlMessage: (JSONObject) -> Unit = {},
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val onStatus: (String) -> Unit = { status ->
@@ -84,12 +87,22 @@ class ControllerRtcSession(
     }
 
     fun sendControl(message: JSONObject): Boolean {
-        val channel = controlChannel ?: return false
+        val type = message.optString("type")
+        val channel = controlChannel
+        if (channel == null) {
+            // 通道没建起来时，A 侧完全静默：界面照旧显示「已连接」，
+            // 用户只会觉得「点了没反应」。这条日志是排查这类问题的唯一线索。
+            FileLog.append("sendControl: no channel type=$type")
+            return false
+        }
         if (channel.state() != DataChannel.State.OPEN) {
+            FileLog.append("sendControl: state=${channel.state()} type=$type")
             return false
         }
         val data = ByteBuffer.wrap(message.toString().toByteArray(Charsets.UTF_8))
-        return channel.send(DataChannel.Buffer(data, false))
+        val sent = channel.send(DataChannel.Buffer(data, false))
+        FileLog.append("sendControl: type=$type sent=$sent")
+        return sent
     }
 
     fun close() {
@@ -213,6 +226,7 @@ class ControllerRtcSession(
         override fun onDataChannel(channel: DataChannel) {
             controlChannel = channel
             channel.registerObserver(dataChannelObserver)
+            FileLog.append("onDataChannel: label=${channel.label()} state=${channel.state()}")
             mainHandler.post { onStatus("data-channel:${channel.state().name}") }
         }
 
@@ -245,7 +259,15 @@ class ControllerRtcSession(
             }
         }
 
-        override fun onMessage(buffer: DataChannel.Buffer) = Unit
+        override fun onMessage(buffer: DataChannel.Buffer) {
+            // B 端会把解锁结果等异步回执从控制通道推过来；解析失败不能把通道搞挂。
+            runCatching {
+                val bytes = ByteArray(buffer.data.remaining())
+                buffer.data.get(bytes)
+                val payload = JSONObject(String(bytes, Charsets.UTF_8))
+                mainHandler.post { onControlMessage(payload) }
+            }
+        }
     }
 
     private fun attachVideoTrack(track: VideoTrack?) {

@@ -6,7 +6,6 @@ import android.content.Intent
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.yuesf.remotecontrol.data.AppPreferences
-import com.yuesf.remotecontrol.data.DeviceRole
 import com.yuesf.remotecontrol.data.SpaceGuard
 
 class BootReceiver : BroadcastReceiver() {
@@ -24,7 +23,9 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         val preferences = AppPreferences(context)
-        if (preferences.savedRoleOrNull() != DeviceRole.AGENT || preferences.loadConfig() == null) {
+        // 不再判断角色：每台装了本 App 的设备都必须能被人按配对码连上，
+        // 否则「谁都能控别人」这套设计在对方重启后就断了一半。
+        if (preferences.loadConfig() == null) {
             return
         }
 

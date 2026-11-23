@@ -55,16 +55,15 @@ class AppPreferences(context: Context) {
         preferences.getString(KEY_DEVICE_NAME, null) ?: defaultDeviceName()
 
     /**
-     * 角色只由界面选择决定，不设默认值。首次安装返回 null，必须用户显式选择。
+     * 角色选择已废弃：现在每台设备同时具备「可被控」与「可控制」两种能力，
+     * 谁是控制端由「谁输入了对方的配对码」决定，不再需要用户申报。
+     *
+     * 这里恒返回 [DeviceRole.AGENT]，仅为了让 register 消息仍带一个 role 字段
+     * 兼容旧服务端——新服务端把它当作可选字段忽略。
      */
-    fun savedRoleOrNull(): DeviceRole? =
-        preferences.getString(KEY_ROLE, null)?.let(DeviceRole::fromWire)
+    fun savedRoleOrNull(): DeviceRole = DeviceRole.AGENT
 
-    fun saveRole(role: DeviceRole) {
-        preferences.edit().putString(KEY_ROLE, role.wireValue).apply()
-    }
-
-    fun save(serverUrl: String, authToken: String, deviceName: String, role: DeviceRole): SignalingConfig? {
+    fun save(serverUrl: String, authToken: String, deviceName: String): SignalingConfig? {
         val parsedUrl = normalizeServerUrl(serverUrl) ?: return null
 
         val normalizedName = deviceName.trim()
@@ -77,7 +76,6 @@ class AppPreferences(context: Context) {
             .putString(KEY_SERVER_URL, parsedUrl.toString().trimEnd('/'))
             .putString(KEY_AUTH_TOKEN, normalizedToken)
             .putString(KEY_DEVICE_NAME, normalizedName)
-            .putString(KEY_ROLE, role.wireValue)
             .putInt(KEY_PRESET_VERSION, BuildConfig.PRESET_VERSION)
             .apply()
 
@@ -85,7 +83,6 @@ class AppPreferences(context: Context) {
     }
 
     fun loadConfig(): SignalingConfig? {
-        val role = savedRoleOrNull() ?: return null
         val serverUrl = normalizeServerUrl(savedServerUrl()) ?: return null
 
         val token = savedAuthToken()
@@ -99,7 +96,7 @@ class AppPreferences(context: Context) {
             authToken = token,
             deviceId = deviceId,
             deviceName = deviceName,
-            role = role,
+            role = savedRoleOrNull(),
         )
     }
 

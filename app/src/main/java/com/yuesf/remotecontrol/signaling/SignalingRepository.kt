@@ -17,6 +17,14 @@ object SignalingRepository {
     private val _signals = MutableSharedFlow<RemoteSignal>(extraBufferCapacity = 32)
     val signals = _signals.asSharedFlow()
 
+    /** 本机两位配对码；未连上服务端时为 null。 */
+    private val _pairCode = MutableStateFlow<String?>(null)
+    val pairCode: StateFlow<String?> = _pairCode.asStateFlow()
+
+    /** 按码查询的结果（码有效即回，含设备离线的情况）。 */
+    private val _codeResolutions = MutableSharedFlow<CodeResolution>(extraBufferCapacity = 4)
+    val codeResolutions = _codeResolutions.asSharedFlow()
+
     /**
      * 业务级错误（目标离线、目标不可达等），与连接状态解耦。
      * 只广播给当前关注它的界面，不改变 [state]，连接本身仍然可用。
@@ -58,6 +66,14 @@ object SignalingRepository {
             override fun onIceServersChanged(servers: List<IceServerSpec>) {
                 iceServers = servers
             }
+
+            override fun onPairCodeChanged(pairCode: String?) {
+                _pairCode.value = pairCode
+            }
+
+            override fun onCodeResolved(resolution: CodeResolution) {
+                _codeResolutions.tryEmit(resolution)
+            }
         },
     )
 
@@ -93,6 +109,9 @@ object SignalingRepository {
     }
 
     fun refreshDevices(): Boolean = client.refreshDevices()
+
+    /** 按两位配对码查设备。命中与否都通过 [codeResolutions] 或 [errors] 回来。 */
+    fun resolveCode(code: String): Boolean = client.resolveCode(code)
 
     fun sendControlRequest(targetDeviceId: String): Boolean =
         client.sendControlRequest(targetDeviceId)
