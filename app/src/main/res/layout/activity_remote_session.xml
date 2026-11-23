@@ -56,15 +56,26 @@
             android:textSize="13sp" />
     </LinearLayout>
 
+    <!--
+        控制条不做通栏贴底：贴底会盖住远端屏幕自己的导航按键（三键 / 手势条），
+        用户想按远端的返回键反而按到了我们的按钮。抬高 96dp 并留出左右边距，
+        以胶囊形式浮在画面上，远端底部区域始终露着。
+    -->
     <LinearLayout
         android:id="@+id/controlBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="#B3000000"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="96dp"
+        android:background="@drawable/bg_control_bar"
         android:gravity="center"
         android:orientation="horizontal"
-        android:padding="8dp">
+        android:paddingStart="4dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="4dp"
+        android:paddingBottom="4dp">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/backButton"
@@ -107,7 +118,7 @@
         android:layout_width="wrap_content"
         android:layout_height="36dp"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="16dp"
+        android:layout_marginBottom="96dp"
         android:background="@drawable/bg_controls_handle"
         android:contentDescription="@string/controls_handle_desc"
         android:gravity="center"
