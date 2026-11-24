@@ -70,6 +70,7 @@ class RemoteAgentService : Service() {
         if (agentSession == null) {
             capture.enterIdleMode()
             releaseWifiLock()
+            applyWakeLockPolicy()
             refreshNotification()
         }
     }
@@ -87,7 +88,9 @@ class RemoteAgentService : Service() {
         createNotificationChannel()
         isRunning = true
         instance = this
-        acquireWakeLock()
+        // 唤醒锁只在约定的秒连时段持有，其余时间让 CPU 能深度睡眠。
+        applyWakeLockPolicy()
+        scheduleWakeLockBoundaryAlarm()
         // 无条件持有：不充电 + 锁屏时 Wi-Fi 会进 PS，锁一放长连接就废。
         acquireWifiLock()
         scheduleKeepAliveAlarm()
@@ -145,7 +148,10 @@ class RemoteAgentService : Service() {
                 "alarm fired online=${SignalingRepository.isOnline} running=$isRunning",
             )
             if (isRunning) {
-                acquireWakeLock()
+                // 保活闹钟醒来时重判时段：即使边界闹钟错过（Doze 顺延/重启），
+                // 最多 10 分钟后也会自动纠正到正确状态。
+                applyWakeLockPolicy()
+                scheduleWakeLockBoundaryAlarm()
                 // Wi-Fi 锁必须一直持有：Doze 一进来 radio 就会进 PS，锁没了下行包
                 // 会被 AP 缓存到 DTIM 才送达，长连接就等于断了（详见 acquireWifiLock 注释）。
                 acquireWifiLock()
@@ -172,6 +178,17 @@ class RemoteAgentService : Service() {
                 return START_STICKY
             }
             // 服务曾被系统回收：落到下面的正常流程把自己重新拉起来。
+        }
+
+        // 时段边界闹钟：进入/退出秒连时段时切换唤醒锁。
+        if (intent?.action == ACTION_WAKELOCK_BOUNDARY) {
+            FileLog.append("wakelock boundary fired, isRunning=$isRunning")
+            if (isRunning) {
+                applyWakeLockPolicy()
+                // 自滚动：排下一个边界，形成一条永远向前的闹钟链。
+                scheduleWakeLockBoundaryAlarm()
+            }
+            return START_STICKY
         }
 
         val projectionData = extractProjectionData(intent)
@@ -237,6 +254,79 @@ class RemoteAgentService : Service() {
             runCatching { acquire() }
                 .onFailure { Log.w(TAG, "acquire wake lock failed", it) }
         }
+    }
+
+    /**
+     * 按 [WakeLockPolicy] 决定唤醒锁的持/放。
+     *
+     * 秒连时段：持锁，锁屏后 WebSocket 数据能被 CPU 立刻处理，A 端连过来秒响应。
+     * 省电时段：放锁，CPU 可以深度睡眠——掉线不会发生（白名单 + 保活闹钟才是
+     * Doze 里的保命机制，唤醒锁在 Doze 下本来就被系统忽略），只是锁屏那一刻的
+     * 连接要等下一个 10 分钟闹钟醒来才响应。
+     *
+     * 会话期间无论什么时段都强制持锁——正在被控时卡顿比耗电更不可接受。
+     */
+    private fun applyWakeLockPolicy() {
+        val hold = agentSession != null || WakeLockPolicy.shouldHold()
+        if (hold) {
+            if (wakeLock?.isHeld != true) {
+                acquireWakeLock()
+                FileLog.append("wakelock ON (${WakeLockPolicy.describe()}, session=${agentSession != null})")
+            }
+        } else if (wakeLock?.isHeld == true) {
+            runCatching { wakeLock?.release() }
+            FileLog.append("wakelock OFF (省电时段)")
+        }
+    }
+
+    /**
+     * 排下一次时段边界的精确闹钟，让秒连/省电切换不依赖 10 分钟保活闹钟的精度。
+     * Doze 下 `setExactAndAllowWhileIdle` 仍会投递（白名单应用），边界最多顺延几分钟。
+     */
+    private fun scheduleWakeLockBoundaryAlarm() {
+        val alarmManager = getSystemService(AlarmManager::class.java) ?: return
+        val delay = WakeLockPolicy.nextBoundaryDelayMs() ?: return
+        if (delay <= 0) {
+            // 边界刚好卡在秒级，直接应用一次策略即可。
+            applyWakeLockPolicy()
+            return
+        }
+        val pending = PendingIntent.getService(
+            this,
+            REQUEST_WAKELOCK_BOUNDARY,
+            Intent(this, RemoteAgentService::class.java).setAction(ACTION_WAKELOCK_BOUNDARY),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val triggerAt = SystemClock.elapsedRealtime() + delay
+        val canBeExact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            alarmManager.canScheduleExactAlarms()
+        runCatching {
+            if (canBeExact) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerAt,
+                    pending,
+                )
+            } else {
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerAt,
+                    pending,
+                )
+            }
+        }.onFailure { FileLog.append("wakelock boundary alarm failed: ${it.javaClass.simpleName}") }
+    }
+
+    private fun cancelWakeLockBoundaryAlarm() {
+        val alarmManager = getSystemService(AlarmManager::class.java) ?: return
+        val pending = PendingIntent.getService(
+            this,
+            REQUEST_WAKELOCK_BOUNDARY,
+            Intent(this, RemoteAgentService::class.java).setAction(ACTION_WAKELOCK_BOUNDARY),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        runCatching { alarmManager.cancel(pending) }
+        pending.cancel()
     }
 
     /**
@@ -452,6 +542,7 @@ class RemoteAgentService : Service() {
         }
         releaseKeepAliveLocks()
         cancelKeepAliveAlarm()
+        cancelWakeLockBoundaryAlarm()
         unregisterNetworkMonitor()
         mainHandler.removeCallbacks(enterIdleRunnable)
 
@@ -575,6 +666,7 @@ class RemoteAgentService : Service() {
         // 会话期间要传画面：撤销待执行的「回空闲档」，并把 Wi-Fi 提到高性能。
         mainHandler.removeCallbacks(enterIdleRunnable)
         acquireWifiLock()
+        applyWakeLockPolicy() // 会话期间强制持锁，不受时段限制
         sessionTargetId = controllerDeviceId
         lateinit var session: AgentRtcSession
 
@@ -732,7 +824,9 @@ class RemoteAgentService : Service() {
         const val ACTION_START = "com.yuesf.remotecontrol.agent.START"
         const val ACTION_STOP = "com.yuesf.remotecontrol.agent.STOP"
         const val ACTION_KEEP_ALIVE = "com.yuesf.remotecontrol.agent.KEEP_ALIVE"
+        private const val ACTION_WAKELOCK_BOUNDARY = "com.yuesf.remotecontrol.agent.WAKELOCK_BOUNDARY"
         private const val REQUEST_KEEP_ALIVE = 4202
+        private const val REQUEST_WAKELOCK_BOUNDARY = 4203
 
         /** 自动重新请求采集授权的最小间隔。 */
         private const val CAPTURE_AUTO_REQUEST_INTERVAL_MS = 120_000L
