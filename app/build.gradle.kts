@@ -11,8 +11,8 @@ android {
         applicationId = "com.yuesf.remotecontrol"
         minSdk = 29
         targetSdk = 34
-        versionCode = 55
-        versionName = "0.26.14"
+        versionCode = 61
+        versionName = "0.28.2"
 
         // 预置信令服务器地址与令牌，省去在两台手机上手工输入 48 位串。
         // 设备角色仍然不预置，由界面选择。

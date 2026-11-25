@@ -20,6 +20,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import com.yuesf.remotecontrol.R
 import com.yuesf.remotecontrol.debug.FileLog
 import java.util.concurrent.Executor
@@ -663,14 +664,22 @@ class RemoteAccessibilityService : AccessibilityService() {
 
     /** 在主线程渲染/更新角标文案；autoHideMs > 0 时到点自动移除。 */
     private fun renderBadge(text: String, autoHideMs: Long) {
+        val active = text == getString(R.string.control_badge_active)
+        val badgeOn = ContextCompat.getColor(
+            this,
+            if (active) R.color.sess_badge_on else R.color.sess_badge_off_on,
+        )
+        val badgeBg = ContextCompat.getColor(
+            this,
+            if (active) R.color.sess_badge_bg else R.color.sess_badge_off_bg,
+        )
         val windowManager = getSystemService(WindowManager::class.java) ?: return
         val textView = badgeView ?: run {
             val created = TextView(this).apply {
                 gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-                textSize = 13f
+                textSize = 12f
                 includeFontPadding = false
-                setPadding(dp(16), dp(7), dp(16), dp(8))
+                setPadding(dp(12), dp(7), dp(12), dp(8))
                 // FLAG_NOT_TOUCHABLE 是关键：A 端远程注入的坐标不能被角标挡住。
                 isClickable = false
                 isFocusable = false
@@ -696,10 +705,18 @@ class RemoteAccessibilityService : AccessibilityService() {
             created
         }
         textView.text = text
+        textView.setTextColor(badgeOn)
+        // 被控 = 实心橙底 + 白点 + 白字；结束 = 中性灰底 + 灰字，无呼吸。
+        val dot = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setSize(dp(8), dp(8))
+            setColor(badgeOn)
+        }
+        textView.setCompoundDrawablesWithIntrinsicBounds(if (active) dot else null, null, null, null)
+        textView.compoundDrawablePadding = dp(4)
         textView.background = GradientDrawable().apply {
-            cornerRadius = dp(20).toFloat()
-            // 被控 = 红底醒目；结束 = 灰底弱化。
-            setColor(if (text == getString(R.string.control_badge_active)) 0xE6D32F2F.toInt() else 0xD9444444.toInt())
+            cornerRadius = dp(16).toFloat()
+            setColor(badgeBg)
         }
         badgeHandler.removeCallbacks(badgeHideRunnable)
         if (autoHideMs > 0) {

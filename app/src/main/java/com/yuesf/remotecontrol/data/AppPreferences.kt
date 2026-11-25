@@ -3,6 +3,8 @@ package com.yuesf.remotecontrol.data
 import android.content.Context
 import android.os.Build
 import com.yuesf.remotecontrol.BuildConfig
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 
 class AppPreferences(context: Context) {
@@ -100,6 +102,63 @@ class AppPreferences(context: Context) {
         )
     }
 
+    /**
+     * 记录一次连接过的设备，最新的排最前，按 deviceId 去重，最多保留 [MAX_CONNECTED_DEVICES] 条。
+     *
+     * 配对码会随服务端重连而变（旧码失效），所以每次都覆盖成最新的值，
+     * 卡片上点连接仍走 deviceId，码只用于展示，避免历史里的旧码把用户带偏。
+     */
+    fun saveConnectedDevice(deviceId: String, deviceName: String, pairCode: String?) {
+        if (deviceId.isBlank() || deviceId == this.deviceId) return
+        synchronized(this) {
+            val existing = loadConnectedDevicesUnsafe()
+                .filter { it.deviceId != deviceId }
+                .toMutableList()
+            existing.add(
+                0,
+                ConnectedDevice(
+                    deviceId = deviceId,
+                    deviceName = deviceName.trim().ifEmpty { "未命名设备" },
+                    pairCode = pairCode?.trim()?.takeIf { it.isNotEmpty() },
+                    lastConnectedAt = System.currentTimeMillis(),
+                ),
+            )
+            val array = JSONArray()
+            for (item in existing.take(MAX_CONNECTED_DEVICES)) {
+                val obj = JSONObject()
+                    .put("deviceId", item.deviceId)
+                    .put("deviceName", item.deviceName)
+                    .put("lastConnectedAt", item.lastConnectedAt)
+                if (item.pairCode != null) obj.put("pairCode", item.pairCode)
+                array.put(obj)
+            }
+            preferences.edit().putString(KEY_CONNECTED_DEVICES, array.toString()).apply()
+        }
+    }
+
+    fun loadConnectedDevices(): List<ConnectedDevice> = synchronized(this) {
+        loadConnectedDevicesUnsafe()
+    }
+
+    /** 调用方必须持有 synchronized(this)。解析全部走容错：坏数据宁可丢掉也不能让首页崩。 */
+    private fun loadConnectedDevicesUnsafe(): List<ConnectedDevice> {
+        val raw = preferences.getString(KEY_CONNECTED_DEVICES, null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            (0 until array.length()).mapNotNull { index ->
+                val obj = array.optJSONObject(index) ?: return@mapNotNull null
+                val id = obj.optString("deviceId", "")
+                if (id.isEmpty()) return@mapNotNull null
+                ConnectedDevice(
+                    deviceId = id,
+                    deviceName = obj.optString("deviceName", "").ifEmpty { "未命名设备" },
+                    pairCode = obj.optString("pairCode", "").ifEmpty { null },
+                    lastConnectedAt = obj.optLong("lastConnectedAt", 0L),
+                )
+            }
+        }.getOrElse { emptyList() }
+    }
+
     private fun defaultDeviceName(): String {
         val model = Build.MODEL?.trim().orEmpty()
         return if (model.isEmpty()) "Android 设备" else model
@@ -113,5 +172,7 @@ class AppPreferences(context: Context) {
         private const val KEY_DEVICE_NAME = "device_name"
         private const val KEY_ROLE = "role"
         private const val KEY_PRESET_VERSION = "preset_version"
+        private const val KEY_CONNECTED_DEVICES = "connected_devices"
+        private const val MAX_CONNECTED_DEVICES = 10
     }
 }

@@ -11,7 +11,7 @@ interface HubOptions {
   logger: Logger;
   maximumMessageBytes: number;
   iceServers?: IceServerSetting[];
-  /** 两位配对码分配表。缺省时退化为「不分配」，仅为兼容旧测试。 */
+  /** 四位配对码分配表。缺省时退化为「不分配」，仅为兼容旧测试。 */
   pairing?: PairingCodeStore;
 }
 
@@ -132,7 +132,7 @@ export class SignalingHub {
         return;
       }
 
-      // 按配对码寻址：客户端只需要「输两位数字」，deviceId 永远不暴露给用户。
+      // 按配对码寻址：客户端只需要「输四位字母数字」，deviceId 永远不暴露给用户。
       // 码有效但设备离线时照样返回 deviceId，让客户端能区分
       // 「码不存在」和「这台设备现在没上线」——两者的提示完全不同。
       if (message.type === "resolve_code") {

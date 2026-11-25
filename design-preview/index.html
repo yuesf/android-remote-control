@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>信号台 SIGNAL DECK · 远程控制设计稿预览</title>
+<style>
+/* ============================================================
+   信号台 SIGNAL DECK — 设计稿预览
+   纯静态 / 内嵌 CSS + JS / 无外部依赖 / 离线可打开
+   所有颜色、间距、圆角、字阶均取自 Phase 1 + Phase 2 定稿 token
+   ============================================================ */
+
+/* ---------- 全局尺度 token（4dp 网格，1dp ≈ 1px 预览） ---------- */
+:root{
+  --sp-xs:4px; --sp-sm:8px; --sp-md:12px; --sp-lg:16px; --sp-xl:24px; --sp-2xl:32px; --sp-3xl:48px;
+  --gutter:16px; --touch:48px;
+  --cell-w:64px; --cell-h:80px; --cell-gap:8px;
+  --nav-h:72px; --controlbar-h:56px; --badge-h:24px;
+  --r-xs:4px; --r-sm:8px; --r-md:12px; --r-lg:16px; --r-xl:20px; --r-pill:999px;
+  --hairline:1px; --control:1.5px; --focus:2px;
+  --font-cn:'Noto Sans SC','PingFang SC','Microsoft YaHei',sans-serif;
+  --font-mono:'Roboto Mono','SFMono-Regular',Consolas,'Liberation Mono',monospace;
+  /* 会话页专属：永远深色，不随系统 / 不随主题切换 */
+  --viewport:#0A0E10; --controlbar:#11181B;
+  --badge-bg:#C2410C; --badge-on:#FFFFFF; --badge-off-bg:#232E31; --badge-off-on:#A3B3B8;
+}
+
+/* ---------- 浅色主题（:root 提供舞台外组件区的默认令牌） ---------- */
+:root,[data-preview-theme="light"]{
+  --primary:#0B6B73; --on-primary:#FFFFFF; --primary-container:#D6EEF0; --on-primary-container:#06383D;
+  --secondary:#47565C; --secondary-container:#DFE8EA;
+  --surface:#FBFCFC; --background:#F2F5F5; --on-surface:#162226; --surface-variant:#E6ECEC;
+  --on-surface-variant:#526267; --outline:#B9C5C7; --outline-variant:#DCE4E5;
+  --error:#B3261E; --error-container:#F9DEDC;
+  --online:#0B7A5B; --online-bg:#DDF2E9; --connecting:#0B6B73;
+  --offline:#66757B; --offline-bg:#E6ECEC; --lost:#B3261E; --lost-bg:#F9DEDC;
+  --controlled:#A8340C; --controlled-bg:#FBE3D5; --controlled-bar-on:#7A2305;
+  --focus-halo:rgba(11,107,115,.12);
+}
+
+/* ---------- 深色主题（会话主题共用基础色，仅 surface/background 落到会话 token） ---------- */
+[data-preview-theme="dark"],[data-preview-theme="session"]{
+  --primary:#4ED3D6; --on-primary:#052A2E; --primary-container:#14434A; --on-primary-container:#C9F4F5;
+  --secondary:#A9B9BE; --secondary-container:#2A3B40; /* 视觉侧确认的精确值，非派生 */
+  --surface:#151D20; --background:#0E1416; --on-surface:#E9F0F1; --surface-variant:#232E31;
+  --on-surface-variant:#A3B3B8; --outline:#3B4B50; --outline-variant:#293439;
+  --error:#FF8A80; --error-container:#5F1D17;
+  --online:#5BE0A5; --online-bg:#17342B; --connecting:var(--primary);
+  --offline:#8A9A9F; --offline-bg:#232E31; --lost:#FF8A80; --lost-bg:#5F1D17;
+  --controlled:#FF9159; --controlled-bg:#3A1E12; --controlled-bar-on:#FFB287;
+  --focus-halo:rgba(78,211,214,.12);
+}
+[data-preview-theme="session"]{ --background:var(--viewport); --surface:var(--controlbar); }
+
+/* ---------- 页面框架 ---------- */
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; background:var(--viewport); color:var(--on-surface);
+  font-family:var(--font-cn); -webkit-font-smoothing:antialiased;
+}
+.mono,.code{font-family:var(--font-mono); font-variant-numeric:tabular-nums}
+.wrap{max-width:1320px; margin:0 auto; padding:0 24px}
+
+/* 页头 */
+header.top{border-bottom:var(--hairline) solid #293439; padding:40px 0 28px}
+.kicker{font-family:var(--font-mono); font-size:11px; letter-spacing:.14em; color:#5BE0A5; text-transform:uppercase}
+h1{font-size:30px; line-height:1.3; font-weight:600; margin:12px 0 8px; letter-spacing:-.01em}
+h1 .en{font-family:var(--font-mono); color:#4ED3D6; font-weight:500}
+.concept{font-size:14px; line-height:24px; color:#A3B3B8; max-width:760px; margin:0}
+
+/* 主题切换 */
+.themerow{display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:24px}
+.themelabel{font-family:var(--font-mono); font-size:11px; letter-spacing:.08em; color:#A3B3B8}
+.switch{display:inline-flex; border:var(--hairline) solid #3B4B50; border-radius:var(--r-pill); padding:3px; gap:2px}
+.switch button{
+  font-family:var(--font-cn); font-size:12px; font-weight:600; line-height:16px;
+  color:#A3B3B8; background:transparent; border:0; border-radius:var(--r-pill);
+  padding:8px 16px; min-height:32px; cursor:pointer; transition:background 240ms,color 240ms;
+}
+.switch button:hover{color:#E9F0F1}
+.switch button.is-active{background:#4ED3D6; color:#052A2E}
+.switch button:focus-visible{outline:var(--focus) solid #4ED3D6; outline-offset:2px}
+.switch-note{font-size:11px; line-height:16px; color:#8A9A9F; font-weight:500}
+
+/* 区块 */
+section.block{padding:40px 0; border-bottom:var(--hairline) solid #293439}
+.sec-head{display:flex; align-items:baseline; gap:12px; margin-bottom:24px; flex-wrap:wrap}
+.sec-num{font-family:var(--font-mono); font-size:12px; color:#5BE0A5}
+h2{font-size:22px; line-height:28px; font-weight:600; margin:0}
+.sec-desc{font-size:13px; line-height:20px; color:#A3B3B8; margin:0; flex-basis:100%; max-width:820px}
+
+/* ---------- 舞台 / 手机 mockup ---------- */
+.stage{display:flex; flex-wrap:wrap; gap:24px; align-items:flex-start}
+.mock{width:328px}
+.mock-cap{display:flex; align-items:baseline; gap:8px; margin:0 0 12px 2px}
+.mock-idx{font-family:var(--font-mono); font-size:11px; color:#5BE0A5}
+.mock-name{font-size:13px; font-weight:600; color:#E9F0F1}
+.mock-theme{font-family:var(--font-mono); font-size:10px; color:#8A9A9F; margin-left:auto}
+.phone{
+  width:328px; padding:8px; background:#232E31; border:var(--hairline) solid #3B4B50;
+  border-radius:32px; /* 机身外框，非组件圆角 */
+}
+.screen{
+  position:relative; width:100%; height:720px; border-radius:24px; overflow:hidden;
+  display:flex; flex-direction:column;
+  background:var(--background); color:var(--on-surface);
+  border:var(--hairline) solid var(--outline-variant);
+}
+.statusbar{
+  flex:0 0 28px; display:flex; align-items:center; justify-content:space-between;
+  padding:0 12px; font-family:var(--font-mono); font-size:11px; letter-spacing:.02em;
+  color:var(--on-surface); background:var(--surface);
+}
+.statusbar .sb-icons{display:flex; gap:5px; align-items:center; font-size:10px}
+
+/* 被控常驻条：三 tab 状态栏下，0↔24dp / 240ms 推开内容；无呼吸、不可滑动关闭、不悬浮遮挡 */
+.controlled-bar{
+  flex:0 0 24px; height:24px; overflow:hidden; display:flex; align-items:center; gap:6px; padding:0 8px 0 12px;
+  background:var(--controlled-bg); color:var(--controlled-bar-on);
+  font-size:12px; line-height:16px; font-weight:600;
+  transition:height 240ms cubic-bezier(.4,0,.2,1),flex-basis 240ms cubic-bezier(.4,0,.2,1);
+}
+.controlled-bar .live-dot{width:8px; height:8px; border-radius:var(--r-pill); background:var(--controlled); flex:0 0 auto}
+.controlled-bar .txt{flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.controlled-bar .detail{
+  position:relative; flex:0 0 auto; height:24px; display:inline-flex; align-items:center; gap:3px;
+  color:var(--controlled-bar-on); font-size:12px; line-height:16px; font-weight:600; white-space:nowrap;
+}
+/* 48×48 透明命中 slab，仅向条内/条外少量扩展，不遮挡页面首个可点元素 */
+.controlled-bar .detail::before{content:""; position:absolute; left:-8px; right:-8px; top:-12px; bottom:-12px}
+.controlled-bar .detail svg{width:16px; height:16px}
+
+.screen-main{flex:1; overflow:hidden; padding:var(--gutter); display:flex; flex-direction:column; gap:var(--sp-md)}
+
+/* 页标题区 */
+.page-head{display:flex; flex-direction:column; gap:2px}
+.page-title{font-size:22px; line-height:28px; font-weight:600}
+.page-meta{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.model{font-size:11px; line-height:14px; font-weight:500; color:var(--on-surface-variant)}
+.head-status{font-size:11px; line-height:14px; font-weight:600; color:var(--on-surface-variant)}
+.head-status b{color:var(--online); font-weight:600}
+
+/* 卡片：elevation=0，靠 outlineVariant 描边定义边界 */
+.card{
+  background:var(--surface); border:var(--hairline) solid var(--outline-variant);
+  border-radius:var(--r-md); padding:var(--sp-md);
+}
+.card-title{font-size:16px; line-height:24px; font-weight:600; margin:0 0 2px}
+.card-help{font-size:14px; line-height:20px; color:var(--on-surface-variant); margin:0}
+
+/* 配对码四位分段格：4 位字母数字，40sp 等宽 */
+.cellrow{display:flex; gap:var(--cell-gap); margin:var(--sp-sm) 0}
+.codecell{
+  width:var(--cell-w); height:var(--cell-h); border-radius:var(--r-md);
+  display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-mono); font-size:40px; line-height:48px; font-weight:500;
+  font-variant-numeric:tabular-nums; transition:background 240ms,border-color 240ms;
+}
+.codecell.empty{background:var(--surface-variant); border:var(--control) solid var(--outline); color:var(--on-surface-variant)}
+.codecell.filled{background:var(--primary-container); border:var(--control) solid var(--primary-container); color:var(--on-primary-container)}
+/* 聚焦：2dp primary + 1dp 12% 光晕 */
+.codecell.focus{background:var(--primary-container); border:var(--focus) solid var(--primary); color:var(--on-primary-container); position:relative; box-shadow:0 0 0 1px var(--focus-halo)}
+.codecell.focus::after{content:""; position:absolute; bottom:14px; width:24px; height:2px; background:var(--primary)}
+/* 错误：2dp error 描边 + 下方 12sp 文案 */
+.codecell.error{background:var(--surface); border:var(--focus) solid var(--error); color:var(--error)}
+
+.btn-connect{
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  min-height:var(--touch); width:100%; border:0; border-radius:var(--r-md);
+  background:var(--primary); color:var(--on-primary);
+  font-size:14px; line-height:20px; font-weight:600; cursor:pointer;
+  transition:transform 80ms,background 240ms;
+}
+.btn-connect:active{transform:scale(.985)}
+.btn-connect svg{width:18px; height:18px}
+
+.page-note{font-size:11px; line-height:16px; font-weight:500; color:var(--on-surface-variant); padding:0 2px}
+
+/* 最近连接 / 设备行：一行两列，最小高 72dp */
+.dev-row{
+  display:grid; grid-template-columns:1fr auto; align-items:center; gap:var(--sp-sm);
+  min-height:72px; padding:var(--sp-md); background:var(--surface-variant);
+  border-radius:var(--r-md);
+}
+.dev-row + .dev-row{margin-top:var(--sp-sm)}
+.dev-col{display:flex; flex-direction:column; gap:3px; min-width:0}
+.dev-name{font-size:14px; line-height:20px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.dev-code{font-family:var(--font-mono); font-size:12px; line-height:16px; color:var(--on-surface-variant); font-variant-numeric:tabular-nums}
+.dev-right{display:flex; align-items:center}
+
+/* 状态徽章：24dp 高 / radius12 / 色 + 图形 + 文字必填。状态双重编码。 */
+.badge{
+  display:inline-flex; align-items:center; gap:5px; height:var(--badge-h); padding:0 8px;
+  border-radius:var(--r-md); font-size:11px; line-height:14px; font-weight:600; white-space:nowrap;
+}
+.badge svg{width:12px; height:12px; flex:0 0 auto; flex-shrink:0}
+/* 设备页列表行：≥14sp 完整状态文案（卡片才允许短后缀），形状不可被挤掉 */
+.badge-full{font-size:14px; line-height:20px; padding:0 10px}
+.badge-full svg{width:14px; height:14px}
+.st-online{color:var(--online); background:var(--online-bg)}
+.st-connecting{color:var(--connecting); background:var(--primary-container)}
+.st-offline{color:var(--offline); background:var(--offline-bg)}
+.st-lost{color:var(--lost); background:var(--lost-bg)}
+.st-controlled{color:var(--badge-on); background:var(--badge-bg)}
+.st-controlled-off{color:var(--badge-off-on); background:var(--badge-off-bg)}
+.badge--bare{background:transparent; padding-left:0}
+
+/* 底部导航：72dp / 选中 primary + 32×4 指示条 / 顶部 1dp 分割线 */
+.bottom-nav{
+  flex:0 0 var(--nav-h); display:grid; grid-template-columns:repeat(3,1fr);
+  border-top:var(--hairline) solid var(--outline-variant); background:var(--surface);
+}
+.nav-item{
+  position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+  color:var(--on-surface-variant); font-size:11px; line-height:14px; font-weight:500;
+}
+.nav-item svg{width:24px; height:24px}
+.nav-item.active{color:var(--primary); font-weight:600}
+.nav-item.active::before{content:""; position:absolute; bottom:0; width:32px; height:4px; border-radius:2px 2px 0 0; background:var(--primary)}
+
+/* 设备页：本机码 + 二维码 */
+.pairing-top{display:flex; gap:var(--sp-md); align-items:center}
+.local-code{flex:1; min-width:0}
+.eyebrow{font-size:11px; line-height:14px; font-weight:600; color:var(--on-surface-variant)}
+.big-code{
+  font-family:var(--font-mono); font-size:32px; line-height:40px; font-weight:600;
+  letter-spacing:.02em; color:var(--on-surface); font-variant-numeric:tabular-nums;
+}
+.mini{font-size:11px; line-height:14px; font-weight:500; color:var(--on-surface-variant)}
+.qr-wrap{display:flex; flex-direction:column; align-items:center; gap:var(--sp-sm)}
+.qr{
+  width:200px; height:200px; background:#FFFFFF; border:var(--hairline) solid var(--outline);
+  border-radius:var(--r-xs); padding:12px; display:block; /* 12dp 白 quiet zone，深色模式仍白底 */
+}
+.qr svg{width:100%; height:100%; display:block}
+.qr-cap{font-size:11px; line-height:14px; color:var(--on-surface-variant); font-weight:500}
+.pairing-hint{font-size:11px; line-height:16px; font-weight:500; color:var(--on-surface-variant); padding-top:var(--sp-sm)}
+
+.list-card-title{display:flex; align-items:center; justify-content:space-between; margin-bottom:var(--sp-sm)}
+.list-card-title h3{margin:0; font-size:16px; line-height:24px; font-weight:600}
+.cap-row{display:flex; align-items:center; gap:var(--sp-sm); min-height:28px; font-size:12px; line-height:16px}
+.cap-row .cap-name{flex:1; color:var(--on-surface)}
+.cap-row .cap-state{font-weight:600; color:var(--online)}
+.cap-row .cap-state.warn{color:var(--controlled)}
+.selfcheck{
+  margin-top:var(--sp-sm); min-height:var(--touch); width:100%;
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  background:var(--surface-variant); color:var(--on-surface); border:var(--hairline) solid var(--outline);
+  border-radius:var(--r-md); font-size:14px; line-height:20px; font-weight:600;
+}
+
+/* ---------- 会话页 mockup ---------- */
+.mock-session .screen{background:var(--viewport); border-color:var(--outline-variant)}
+.session-viewport{flex:1; position:relative; display:flex; align-items:center; justify-content:center; padding:var(--sp-xl)}
+.session-controlbar{
+  flex:0 0 var(--controlbar-h); display:flex; align-items:center; gap:var(--sp-sm);
+  padding:0 var(--sp-sm); background:var(--controlbar);
+  border-bottom:var(--hairline) solid #293439;
+}
+.ctrl-btn{
+  width:var(--touch); height:var(--touch); flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+  border:0; border-radius:var(--r-sm); background:transparent; color:#E9F0F1; cursor:pointer;
+  transition:background 80ms;
+}
+.ctrl-btn:active{background:#232E31}
+.ctrl-btn svg{width:24px; height:24px}
+.ctrl-badge{
+  margin-left:auto; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 10px;
+  background:var(--badge-bg); color:var(--badge-on); border-radius:var(--r-pill);
+  font-size:12px; line-height:16px; font-weight:600; white-space:nowrap;
+  animation:breathe 1600ms ease-in-out infinite;
+}
+.ctrl-badge .dot{width:8px; height:8px; border-radius:var(--r-pill); background:var(--badge-on)}
+.lock-card{
+  width:100%; background:#151D20; border:var(--hairline) solid #3B4B50; border-radius:var(--r-md);
+  padding:var(--sp-xl); display:flex; flex-direction:column; align-items:center; text-align:center; gap:var(--sp-md);
+  animation:sessionFade 300ms ease-out both;
+}
+.lock-card .lock-ico{
+  width:48px; height:48px; border:var(--hairline) solid #3B4B50; border-radius:var(--r-md);
+  display:flex; align-items:center; justify-content:center; color:#4ED3D6;
+}
+.lock-card .lock-ico svg{width:24px; height:24px}
+.lock-card h3{margin:0; font-size:16px; line-height:24px; font-weight:600; color:#E9F0F1}
+.lock-card p{margin:0; font-size:12px; line-height:18px; color:#A3B3B8}
+.session-foot{
+  flex:0 0 auto; display:flex; align-items:center; justify-content:center; gap:8px;
+  padding:var(--sp-md); background:var(--controlbar); border-top:var(--hairline) solid #293439;
+  color:#A3B3B8; font-size:11px; line-height:14px; font-weight:600;
+}
+
+/* ---------- Token 色板 ---------- */
+.groups{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:20px}
+.group{background:var(--viewport); border:var(--hairline) solid #293439; border-radius:var(--r-md); padding:20px}
+.group h3{margin:0 0 4px; font-size:14px; line-height:20px; font-weight:600; color:#E9F0F1}
+.group .gsub{margin:0 0 16px; font-family:var(--font-mono); font-size:10px; color:#8A9A9F}
+.swatches{display:grid; grid-template-columns:repeat(2,1fr); gap:8px 12px}
+.sw{display:flex; align-items:center; gap:10px; min-width:0}
+.chip{width:36px; height:36px; flex:0 0 auto; border-radius:var(--r-xs); border:var(--hairline) solid rgba(255,255,255,.14)}
+.sw-txt{min-width:0}
+.sw-name{font-family:var(--font-mono); font-size:10px; color:#A3B3B8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.sw-hex{font-family:var(--font-mono); font-size:11px; color:#E9F0F1; font-variant-numeric:tabular-nums}
+
+/* ---------- 字阶表 ---------- */
+.type-table{width:100%; border-collapse:collapse; background:var(--viewport); border:var(--hairline) solid #293439; border-radius:var(--r-md); overflow:hidden}
+.type-table th,.type-table td{text-align:left; padding:14px 16px; border-bottom:var(--hairline) solid #293439; vertical-align:middle}
+.type-table th{font-family:var(--font-mono); font-size:10px; letter-spacing:.08em; color:#8A9A9F; font-weight:500; text-transform:uppercase}
+.type-table tr:last-child td{border-bottom:0}
+.t-name{font-size:13px; font-weight:600; color:#E9F0F1}
+.t-use{font-size:11px; color:#8A9A9F}
+.t-spec{font-family:var(--font-mono); font-size:11px; color:#4ED3D6; white-space:nowrap}
+.t-sample{color:#E9F0F1; font-variant-numeric:tabular-nums; line-height:1.2}
+.s-display{font-family:var(--font-mono); font-size:56px; font-weight:500}
+.s-headline{font-family:var(--font-mono); font-size:32px; font-weight:600}
+.s-tl{font-size:22px; font-weight:600}
+.s-tm{font-size:16px; font-weight:600}
+.s-bl{font-size:16px; font-weight:400}
+.s-bm{font-size:14px; font-weight:400}
+.s-ll{font-size:14px; font-weight:600}
+.s-lm{font-size:12px; font-weight:600}
+.s-ls{font-size:11px; font-weight:500}
+.s-code{font-family:var(--font-mono); font-size:12px; font-weight:400}
+
+/* ---------- 组件状态 / 文案矩阵 ---------- */
+.panel{background:var(--viewport); border:var(--hairline) solid #293439; border-radius:var(--r-md); padding:20px}
+.panel h3{margin:0 0 16px; font-size:14px; line-height:20px; font-weight:600; color:#E9F0F1}
+.cell-states{display:flex; flex-wrap:wrap; gap:24px}
+.cell-item{display:flex; flex-direction:column; align-items:center; gap:8px}
+.cell-item .codecell{width:52px; height:64px; font-size:36px; line-height:44px}
+.cell-item .cs-label{font-family:var(--font-mono); font-size:10px; color:#8A9A9F}
+.cell-item .cell-err{font-size:12px; line-height:16px; font-weight:600; color:var(--error); max-width:180px; text-align:center}
+.spec-note{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:8px 24px; margin-top:20px; padding:16px 20px; background:var(--viewport); border:var(--hairline) solid #293439; border-radius:var(--r-md)}
+.spec-note div{font-size:12px; line-height:18px; color:#A3B3B8}
+.spec-note b{color:#5BE0A5; font-weight:600}
+.copy-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px}
+.copy-card{background:var(--viewport); border:var(--hairline) solid #293439; border-radius:var(--r-md); padding:16px}
+.copy-card .cc-label{font-family:var(--font-mono); font-size:10px; color:#5BE0A5; margin-bottom:10px; letter-spacing:.06em}
+.copy-card .cc-text{font-size:13px; line-height:20px; color:#E9F0F1}
+.copy-card .cc-text + .cc-text{margin-top:8px}
+.errorbar{
+  display:flex; align-items:center; gap:8px; padding:12px; border-radius:var(--r-md);
+  background:#F9DEDC; color:#B3261E; font-size:12px; line-height:18px; font-weight:600;
+  border:var(--hairline) solid #B3261E;
+}
+.action-copy{
+  margin-left:auto; color:#B3261E; font-size:11px; font-weight:600; white-space:nowrap;
+  border:var(--hairline) solid #B3261E; border-radius:var(--r-sm); padding:4px 8px;
+}
+.status-strip{display:flex; flex-wrap:wrap; gap:10px}
+.status-strip .badge{height:28px; font-size:12px}
+footer{padding:32px 0 48px; color:#8A9A9F; font-size:12px; line-height:20px}
+footer .mono{color:#5BE0A5}
+
+/* 呼吸只属于会话页 32dp 被控角标：alpha 0.82↔1 / 1600ms；常驻条不呼吸 */
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.82}}
+@keyframes sessionFade{from{opacity:0}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none !important; transition:none !important}
+}
+@media (max-width:760px){
+  h1{font-size:24px}
+  .stage{justify-content:center}
+  .type-table thead{display:none}
+  .type-table td{display:block; border-bottom:0; padding:6px 12px}
+  .type-table tr{border-bottom:var(--hairline) solid #293439; padding:8px 0}
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="kicker">Design System · Remote Control · v1.0</div>
+    <h1>信号台 <span class="en">SIGNAL DECK</span></h1>
+    <p class="concept">以仪表台的克制语言，把「谁在连、连到谁、正在被谁控制」一眼说清——状态双重编码，信息不靠颜色单独承载。</p>
+    <div class="themerow">
+      <span class="themelabel">PREVIEW THEME</span>
+      <div class="switch" role="group" aria-label="预览主题切换">
+        <button type="button" data-theme-btn="light" class="is-active" aria-pressed="true">浅色</button>
+        <button type="button" data-theme-btn="dark" aria-pressed="false">深色</button>
+        <button type="button" data-theme-btn="session" aria-pressed="false">会话</button>
+      </div>
+      <span class="switch-note">切换会实时改变「首页 / 设备页」预览配色；深色示例与会话页按规范始终锁定。</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ 01 页面预览 ============ -->
+  <section class="block" id="preview">
+    <div class="sec-head">
+      <span class="sec-num">01</span><h2>页面预览</h2>
+      <p class="sec-desc">四部手机：首页浅色（含被控常驻条）· 设备页浅色 · 首页深色 · 会话页。全部文案取自定稿字符串。</p>
+    </div>
+
+    <div class="stage" id="stage" data-preview-theme="light">
+
+      <!-- ① 首页 浅色 —— 跟随主题切换 -->
+      <div class="mock">
+        <div class="mock-cap"><span class="mock-idx">01</span><span class="mock-name">首页</span><span class="mock-theme">LIGHT / 跟随切换</span></div>
+        <div class="phone"><div class="screen">
+          <div class="statusbar"><span>09:41</span><span class="sb-icons">▮▮▮ ▰ 100%</span></div>
+          <div class="controlled-bar" title="浅底 #FBE3D5 / 字 #7A2305 / 点 #A8340C；12sp600 + 8dp 实心点；右侧 16dp chevron_end + 12sp「被控详情」；48×48 命中 slab；无呼吸、不可滑动关闭；0↔24dp / 240ms 推开内容">
+            <span class="live-dot"></span>
+            <span class="txt">被控中·控制方：Pixel 8 Pro</span>
+            <span class="detail">被控详情<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+          </div>
+          <div class="screen-main">
+            <div class="page-head">
+              <div class="page-title">首页</div>
+              <div class="page-meta"><span class="model">Pixel 8 Pro · Android 14</span><span class="head-status"><b>●</b> 信令在线</span></div>
+            </div>
+
+            <div class="card">
+              <h3 class="card-title">连接其他设备</h3>
+              <p class="card-help">输入对方的四位配对码（字母+数字）即可连上并操作对方手机。</p>
+              <div class="cellrow">
+                <div class="codecell filled">K</div>
+                <div class="codecell filled">7</div>
+                <div class="codecell filled">M</div>
+                <div class="codecell focus">2</div>
+              </div>
+              <button class="btn-connect" type="button">连接
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h14M13 7l5 5-5 5"/></svg>
+              </button>
+            </div>
+
+            <div class="card" style="padding:12px">
+              <div class="list-card-title"><h3>最近连接</h3><span class="model">2 台</span></div>
+              <div class="dev-row">
+                <div class="dev-col"><span class="dev-name">Pixel 7</span><span class="dev-code">配对码 M4K7</span></div>
+                <div class="dev-right"><span class="badge st-online"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>在线·可被控</span></div>
+              </div>
+              <div class="dev-row">
+                <div class="dev-col"><span class="dev-name">Galaxy S23</span><span class="dev-code">配对码 P9W3</span></div>
+                <div class="dev-right"><span class="badge st-offline"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>离线</span></div>
+              </div>
+            </div>
+
+            <p class="page-note">不知道对方的码？切到「设备」页，从在线设备列表里直接点连接。</p>
+          </div>
+          <nav class="bottom-nav" aria-label="底部导航">
+            <div class="nav-item active"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>首页</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="4" width="13" height="12" rx="2"/><rect x="17" y="8" width="4.5" height="10" rx="1"/></svg>设备</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>设置</div>
+          </nav>
+        </div></div>
+      </div>
+
+      <!-- ② 设备页 浅色 —— 跟随主题切换 -->
+      <div class="mock">
+        <div class="mock-cap"><span class="mock-idx">02</span><span class="mock-name">设备</span><span class="mock-theme">LIGHT / 跟随切换</span></div>
+        <div class="phone"><div class="screen">
+          <div class="statusbar"><span>09:41</span><span class="sb-icons">▮▮▮ ▰ 100%</span></div>
+          <div class="controlled-bar" title="三 tab 任意页均显示；浅底 #FBE3D5 / 字 #7A2305 / 点 #A8340C；右侧 16dp chevron_end + 12sp「被控详情」；48×48 命中 slab，不遮挡首个可点元素">
+            <span class="live-dot"></span>
+            <span class="txt">被控中·控制方：Pixel 8 Pro</span>
+            <span class="detail">被控详情<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+          </div>
+          <div class="screen-main">
+            <div class="page-head">
+              <div class="page-title">设备</div>
+              <div class="page-meta"><span class="model">Pixel 8 Pro · Android 14</span><span class="head-status"><b>●</b> 信令在线</span></div>
+            </div>
+
+            <div class="card">
+              <div class="pairing-top">
+                <div class="local-code">
+                  <div class="eyebrow">本机配对码</div>
+                  <div class="big-code">K7M2</div>
+                  <div class="mini">固定不变</div>
+                </div>
+                <div class="qr-wrap">
+                  <div class="qr" aria-label="本机配对二维码占位，200×200 白底">
+                    <svg viewBox="0 0 21 21" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">
+                      <rect width="21" height="21" fill="#FFFFFF"/>
+                      <g fill="#111111">
+                        <rect x="0" y="0" width="7" height="7"/><rect x="1" y="1" width="5" height="5" fill="#FFFFFF"/><rect x="2" y="2" width="3" height="3"/>
+                        <rect x="14" y="0" width="7" height="7"/><rect x="15" y="1" width="5" height="5" fill="#FFFFFF"/><rect x="16" y="2" width="3" height="3"/>
+                        <rect x="0" y="14" width="7" height="7"/><rect x="1" y="15" width="5" height="5" fill="#FFFFFF"/><rect x="2" y="16" width="3" height="3"/>
+                        <rect x="8" y="0" width="1" height="1"/><rect x="10" y="0" width="2" height="1"/><rect x="13" y="1" width="1" height="1"/>
+                        <rect x="8" y="2" width="2" height="1"/><rect x="12" y="2" width="1" height="1"/><rect x="9" y="3" width="1" height="1"/>
+                        <rect x="11" y="3" width="2" height="1"/><rect x="8" y="4" width="1" height="1"/><rect x="13" y="4" width="1" height="1"/>
+                        <rect x="10" y="5" width="1" height="1"/><rect x="12" y="5" width="2" height="1"/><rect x="9" y="6" width="2" height="1"/>
+                        <rect x="8" y="7" width="1" height="1"/><rect x="11" y="7" width="2" height="1"/><rect x="0" y="8" width="1" height="1"/>
+                        <rect x="2" y="8" width="2" height="1"/><rect x="5" y="8" width="1" height="1"/><rect x="8" y="8" width="3" height="1"/>
+                        <rect x="13" y="8" width="1" height="1"/><rect x="16" y="8" width="2" height="1"/><rect x="19" y="8" width="1" height="1"/>
+                        <rect x="1" y="9" width="1" height="1"/><rect x="4" y="9" width="2" height="1"/><rect x="9" y="9" width="1" height="1"/>
+                        <rect x="12" y="9" width="2" height="1"/><rect x="15" y="9" width="1" height="1"/><rect x="18" y="9" width="2" height="1"/>
+                        <rect x="0" y="10" width="2" height="1"/><rect x="3" y="10" width="1" height="1"/><rect x="6" y="10" width="2" height="1"/>
+                        <rect x="10" y="10" width="1" height="1"/><rect x="14" y="10" width="3" height="1"/><rect x="20" y="10" width="1" height="1"/>
+                        <rect x="2" y="11" width="1" height="1"/><rect x="5" y="11" width="2" height="1"/><rect x="8" y="11" width="1" height="1"/>
+                        <rect x="12" y="11" width="1" height="1"/><rect x="16" y="11" width="2" height="1"/><rect x="19" y="11" width="1" height="1"/>
+                        <rect x="0" y="12" width="1" height="1"/><rect x="3" y="12" width="3" height="1"/><rect x="9" y="12" width="2" height="1"/>
+                        <rect x="13" y="12" width="1" height="1"/><rect x="17" y="12" width="2" height="1"/><rect x="1" y="13" width="2" height="1"/>
+                        <rect x="5" y="13" width="1" height="1"/><rect x="8" y="13" width="3" height="1"/><rect x="12" y="13" width="2" height="1"/>
+                        <rect x="16" y="13" width="1" height="1"/><rect x="19" y="13" width="1" height="1"/>
+                        <rect x="8" y="14" width="1" height="1"/><rect x="11" y="14" width="2" height="1"/><rect x="14" y="14" width="1" height="1"/>
+                        <rect x="9" y="15" width="2" height="1"/><rect x="13" y="15" width="1" height="1"/><rect x="16" y="15" width="3" height="1"/>
+                        <rect x="8" y="16" width="3" height="1"/><rect x="12" y="16" width="1" height="1"/><rect x="15" y="16" width="2" height="1"/>
+                        <rect x="10" y="17" width="1" height="1"/><rect x="13" y="17" width="2" height="1"/><rect x="17" y="17" width="1" height="1"/>
+                        <rect x="8" y="18" width="2" height="1"/><rect x="12" y="18" width="3" height="1"/><rect x="16" y="18" width="1" height="1"/>
+                        <rect x="9" y="19" width="1" height="1"/><rect x="11" y="19" width="2" height="1"/><rect x="15" y="19" width="2" height="1"/>
+                        <rect x="8" y="20" width="3" height="1"/><rect x="13" y="20" width="1" height="1"/><rect x="17" y="20" width="2" height="1"/>
+                      </g>
+                    </svg>
+                  </div>
+                  <div class="qr-cap">扫码导入配置</div>
+                </div>
+              </div>
+              <div class="pairing-hint">把这四个字符告诉要控制这台手机的人。</div>
+            </div>
+
+            <div class="card">
+              <div class="list-card-title"><h3>在线设备</h3><span class="badge st-online" style="height:20px"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>1 台在线</span></div>
+              <div class="dev-row">
+                <div class="dev-col"><span class="dev-name">Pixel 7</span><span class="dev-code">配对码 M4K7</span></div>
+                <div class="dev-right"><span class="badge st-online badge-full"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>在线，未授权</span></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="list-card-title"><h3>被控能力</h3><span class="model">本地状态</span></div>
+              <div class="cap-row"><span class="cap-name">屏幕采集</span><span class="cap-state">● 已就绪</span></div>
+              <div class="cap-row"><span class="cap-name">无障碍手势</span><span class="cap-state">● 已启用</span></div>
+              <div class="cap-row"><span class="cap-name">锁屏保持</span><span class="cap-state warn">● 本地偏好已关</span></div>
+              <button class="selfcheck" type="button">设备能力自检</button>
+            </div>
+          </div>
+          <nav class="bottom-nav" aria-label="底部导航">
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>首页</div>
+            <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="4" width="13" height="12" rx="2"/><rect x="17" y="8" width="4.5" height="10" rx="1"/></svg>设备</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>设置</div>
+          </nav>
+        </div></div>
+      </div>
+
+      <!-- ③ 首页 深色 —— 锁定深色 -->
+      <div class="mock" data-preview-theme="dark">
+        <div class="mock-cap"><span class="mock-idx">03</span><span class="mock-name">首页</span><span class="mock-theme">DARK / 固定</span></div>
+        <div class="phone"><div class="screen">
+          <div class="statusbar"><span>09:41</span><span class="sb-icons">▮▮▮ ▰ 100%</span></div>
+          <div class="controlled-bar" title="深底 #3A1E12 / 字 #FFB287 / 点 #FF9159；12sp600 + 8dp 实心点；右侧 16dp chevron_end + 12sp「被控详情」；48×48 命中 slab；无呼吸、不可滑动关闭">
+            <span class="live-dot"></span>
+            <span class="txt">被控中·控制方：Pixel 8 Pro</span>
+            <span class="detail">被控详情<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></span>
+          </div>
+          <div class="screen-main">
+            <div class="page-head">
+              <div class="page-title">首页</div>
+              <div class="page-meta"><span class="model">Pixel 8 Pro · Android 14</span><span class="head-status"><b>●</b> 信令在线</span></div>
+            </div>
+            <div class="card">
+              <h3 class="card-title">连接其他设备</h3>
+              <p class="card-help">输入对方的四位配对码（字母+数字）即可连上并操作对方手机。</p>
+              <div class="cellrow">
+                <div class="codecell filled">K</div>
+                <div class="codecell filled">7</div>
+                <div class="codecell filled">M</div>
+                <div class="codecell focus">2</div>
+              </div>
+              <button class="btn-connect" type="button">连接
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h14M13 7l5 5-5 5"/></svg>
+              </button>
+            </div>
+            <div class="card" style="padding:12px">
+              <div class="list-card-title"><h3>最近连接</h3><span class="model">2 台</span></div>
+              <div class="dev-row">
+                <div class="dev-col"><span class="dev-name">Pixel 7</span><span class="dev-code">配对码 M4K7</span></div>
+                <div class="dev-right"><span class="badge st-online"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>在线·可被控</span></div>
+              </div>
+              <div class="dev-row">
+                <div class="dev-col"><span class="dev-name">Galaxy S23</span><span class="dev-code">配对码 P9W3</span></div>
+                <div class="dev-right"><span class="badge st-offline"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>离线</span></div>
+              </div>
+            </div>
+            <p class="page-note">不知道对方的码？切到「设备」页，从在线设备列表里直接点连接。</p>
+          </div>
+          <nav class="bottom-nav" aria-label="底部导航">
+            <div class="nav-item active"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>首页</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="4" width="13" height="12" rx="2"/><rect x="17" y="8" width="4.5" height="10" rx="1"/></svg>设备</div>
+            <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>设置</div>
+          </nav>
+        </div></div>
+      </div>
+
+      <!-- ④ 会话页 —— 锁定会话主题 -->
+      <div class="mock mock-session" data-preview-theme="session">
+        <div class="mock-cap"><span class="mock-idx">04</span><span class="mock-name">会话</span><span class="mock-theme">SESSION / 固定深色</span></div>
+        <div class="phone"><div class="screen">
+          <div class="statusbar" style="background:#11181B"><span>09:41</span><span class="sb-icons">▮▮▮ ▰ 100%</span></div>
+          <div class="session-controlbar">
+            <button class="ctrl-btn" type="button" aria-label="返回"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg></button>
+            <button class="ctrl-btn" type="button" aria-label="主页"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></button>
+            <button class="ctrl-btn" type="button" aria-label="多任务"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
+            <span class="ctrl-badge"><span class="dot"></span>被控中·Pixel 8 Pro</span>
+          </div>
+          <div class="session-viewport">
+            <div class="lock-card">
+              <div class="lock-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+              <h3>对方屏幕已锁定，请让对方在本机解锁</h3>
+              <p>控制端无法远程解锁，这是系统安全限制</p>
+            </div>
+          </div>
+          <div class="session-foot"><span class="badge st-online" style="height:20px"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>已连接</span>远端画面 · 锁屏黑屏</div>
+        </div></div>
+      </div>
+
+    </div>
+
+    <div class="spec-note">
+      <div><b>fontScale &gt; 1.3</b>：首页「最近连接」/ 设备页在线列表由一行两列降为一行一列，按钮撑满卡片宽度，状态文字恢复单行。这是布局降级、不是字号降级——11sp 绝不降到 10sp 以下，状态形状不可被挤掉。</div>
+      <div><b>完整状态文案</b>：设备页列表每行用 ≥14sp 完整文案（如「在线，未授权」）；卡片才允许短后缀（如「在线·受限」）；TalkBack 连后缀完整读「在线，未授权」，不受视觉截断影响。</div>
+      <div><b>被控常驻条</b>：浅 #FBE3D5 / 字 #7A2305 / 点 #A8340C，深 #3A1E12 / 字 #FFB287 / 点 #FF9159；右侧 16dp chevron_end + 12sp「被控详情」，命中 48×48dp；无呼吸、不可滑动关闭；0↔24dp / 240ms 推开内容。</div>
+      <div><b>呼吸仅限</b>会话页 32dp 被控角标 alpha 0.82↔1 / 1600ms；系统「减少动态效果」下所有循环动效静态化。</div>
+      <div><b>连接按钮</b>：48dp 高 / radius12；「连接中…」换图标时宽度锁定避免跳动。</div>
+      <div><b>二维码</b>：200×200dp + 12dp 白 quiet zone，深色模式仍白底，绝不反色。</div>
+    </div>
+  </section>
+
+  <!-- ============ 02 Token 色板 ============ -->
+  <section class="block" id="tokens">
+    <div class="sec-head">
+      <span class="sec-num">02</span><h2>Token 色板</h2>
+      <p class="sec-desc">四组色板与定稿 HEX 一一对应；深色 secondary / connecting 精确值已由视觉侧确认，映射与配套色见 README。</p>
+    </div>
+    <div class="groups">
+
+      <div class="group">
+        <h3>浅色基础</h3><p class="gsub">LIGHT / values</p>
+        <div class="swatches">
+          <div class="sw"><span class="chip" style="background:#0B6B73"></span><span class="sw-txt"><span class="sw-name">primary</span><br><span class="sw-hex">#0B6B73</span></span></div>
+          <div class="sw"><span class="chip" style="background:#FFFFFF"></span><span class="sw-txt"><span class="sw-name">onPrimary</span><br><span class="sw-hex">#FFFFFF</span></span></div>
+          <div class="sw"><span class="chip" style="background:#D6EEF0"></span><span class="sw-txt"><span class="sw-name">primaryContainer</span><br><span class="sw-hex">#D6EEF0</span></span></div>
+          <div class="sw"><span class="chip" style="background:#06383D"></span><span class="sw-txt"><span class="sw-name">onPrimaryContainer</span><br><span class="sw-hex">#06383D</span></span></div>
+          <div class="sw"><span class="chip" style="background:#47565C"></span><span class="sw-txt"><span class="sw-name">secondary</span><br><span class="sw-hex">#47565C</span></span></div>
+          <div class="sw"><span class="chip" style="background:#FFFFFF"></span><span class="sw-txt"><span class="sw-name">onSecondary</span><br><span class="sw-hex">#FFFFFF</span></span></div>
+          <div class="sw"><span class="chip" style="background:#DFE8EA"></span><span class="sw-txt"><span class="sw-name">secondaryContainer</span><br><span class="sw-hex">#DFE8EA</span></span></div>
+          <div class="sw"><span class="chip" style="background:#29383D"></span><span class="sw-txt"><span class="sw-name">onSecondaryContainer</span><br><span class="sw-hex">#29383D</span></span></div>
+          <div class="sw"><span class="chip" style="background:#FBFCFC"></span><span class="sw-txt"><span class="sw-name">surface</span><br><span class="sw-hex">#FBFCFC</span></span></div>
+          <div class="sw"><span class="chip" style="background:#F2F5F5"></span><span class="sw-txt"><span class="sw-name">background</span><br><span class="sw-hex">#F2F5F5</span></span></div>
+          <div class="sw"><span class="chip" style="background:#162226"></span><span class="sw-txt"><span class="sw-name">onSurface</span><br><span class="sw-hex">#162226</span></span></div>
+          <div class="sw"><span class="chip" style="background:#E6ECEC"></span><span class="sw-txt"><span class="sw-name">surfaceVariant</span><br><span class="sw-hex">#E6ECEC</span></span></div>
+          <div class="sw"><span class="chip" style="background:#526267"></span><span class="sw-txt"><span class="sw-name">onSurfaceVariant</span><br><span class="sw-hex">#526267</span></span></div>
+          <div class="sw"><span class="chip" style="background:#B9C5C7"></span><span class="sw-txt"><span class="sw-name">outline</span><br><span class="sw-hex">#B9C5C7</span></span></div>
+          <div class="sw"><span class="chip" style="background:#DCE4E5"></span><span class="sw-txt"><span class="sw-name">outlineVariant</span><br><span class="sw-hex">#DCE4E5</span></span></div>
+          <div class="sw"><span class="chip" style="background:#B3261E"></span><span class="sw-txt"><span class="sw-name">error</span><br><span class="sw-hex">#B3261E</span></span></div>
+          <div class="sw"><span class="chip" style="background:#F9DEDC"></span><span class="sw-txt"><span class="sw-name">errorContainer</span><br><span class="sw-hex">#F9DEDC</span></span></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3>深色基础</h3><p class="gsub">DARK / values-night</p>
+        <div class="swatches">
+          <div class="sw"><span class="chip" style="background:#4ED3D6"></span><span class="sw-txt"><span class="sw-name">primary</span><br><span class="sw-hex">#4ED3D6</span></span></div>
+          <div class="sw"><span class="chip" style="background:#052A2E"></span><span class="sw-txt"><span class="sw-name">onPrimary</span><br><span class="sw-hex">#052A2E</span></span></div>
+          <div class="sw"><span class="chip" style="background:#14434A"></span><span class="sw-txt"><span class="sw-name">primaryContainer</span><br><span class="sw-hex">#14434A</span></span></div>
+          <div class="sw"><span class="chip" style="background:#C9F4F5"></span><span class="sw-txt"><span class="sw-name">onPrimaryContainer</span><br><span class="sw-hex">#C9F4F5</span></span></div>
+          <div class="sw"><span class="chip" style="background:#A9B9BE"></span><span class="sw-txt"><span class="sw-name">secondary</span><br><span class="sw-hex">#A9B9BE</span></span></div>
+          <div class="sw"><span class="chip" style="background:#1B282C"></span><span class="sw-txt"><span class="sw-name">onSecondary</span><br><span class="sw-hex">#1B282C</span></span></div>
+          <div class="sw"><span class="chip" style="background:#2A3B40"></span><span class="sw-txt"><span class="sw-name">secondaryContainer</span><br><span class="sw-hex">#2A3B40</span></span></div>
+          <div class="sw"><span class="chip" style="background:#C4D5D9"></span><span class="sw-txt"><span class="sw-name">onSecondaryContainer</span><br><span class="sw-hex">#C4D5D9</span></span></div>
+          <div class="sw"><span class="chip" style="background:#151D20"></span><span class="sw-txt"><span class="sw-name">surface</span><br><span class="sw-hex">#151D20</span></span></div>
+          <div class="sw"><span class="chip" style="background:#0E1416"></span><span class="sw-txt"><span class="sw-name">background</span><br><span class="sw-hex">#0E1416</span></span></div>
+          <div class="sw"><span class="chip" style="background:#E9F0F1"></span><span class="sw-txt"><span class="sw-name">onSurface</span><br><span class="sw-hex">#E9F0F1</span></span></div>
+          <div class="sw"><span class="chip" style="background:#232E31"></span><span class="sw-txt"><span class="sw-name">surfaceVariant</span><br><span class="sw-hex">#232E31</span></span></div>
+          <div class="sw"><span class="chip" style="background:#A3B3B8"></span><span class="sw-txt"><span class="sw-name">onSurfaceVariant</span><br><span class="sw-hex">#A3B3B8</span></span></div>
+          <div class="sw"><span class="chip" style="background:#3B4B50"></span><span class="sw-txt"><span class="sw-name">outline</span><br><span class="sw-hex">#3B4B50</span></span></div>
+          <div class="sw"><span class="chip" style="background:#293439"></span><span class="sw-txt"><span class="sw-name">outlineVariant</span><br><span class="sw-hex">#293439</span></span></div>
+          <div class="sw"><span class="chip" style="background:#FF8A80"></span><span class="sw-txt"><span class="sw-name">error</span><br><span class="sw-hex">#FF8A80</span></span></div>
+          <div class="sw"><span class="chip" style="background:#5F1D17"></span><span class="sw-txt"><span class="sw-name">errorContainer</span><br><span class="sw-hex">#5F1D17</span></span></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3>语义状态色</h3><p class="gsub">SEMANTIC / light → dark</p>
+        <div class="swatches">
+          <div class="sw"><span class="chip" style="background:#0B7A5B"></span><span class="sw-txt"><span class="sw-name">online</span><br><span class="sw-hex">#0B7A5B</span></span></div>
+          <div class="sw"><span class="chip" style="background:#DDF2E9"></span><span class="sw-txt"><span class="sw-name">onlineBg</span><br><span class="sw-hex">#DDF2E9</span></span></div>
+          <div class="sw"><span class="chip" style="background:#5BE0A5"></span><span class="sw-txt"><span class="sw-name">online · dark</span><br><span class="sw-hex">#5BE0A5</span></span></div>
+          <div class="sw"><span class="chip" style="background:#17342B"></span><span class="sw-txt"><span class="sw-name">onlineBg · dark</span><br><span class="sw-hex">#17342B</span></span></div>
+          <div class="sw"><span class="chip" style="background:#0B6B73"></span><span class="sw-txt"><span class="sw-name">connecting</span><br><span class="sw-hex">#0B6B73</span></span></div>
+          <div class="sw"><span class="chip" style="background:#D6EEF0"></span><span class="sw-txt"><span class="sw-name">connectingBg</span><br><span class="sw-hex">#D6EEF0</span></span></div>
+          <div class="sw"><span class="chip" style="background:#06383D"></span><span class="sw-txt"><span class="sw-name">connectingOn</span><br><span class="sw-hex">#06383D</span></span></div>
+          <div class="sw"><span class="chip" style="background:#4ED3D6"></span><span class="sw-txt"><span class="sw-name">connecting · dark</span><br><span class="sw-hex">#4ED3D6</span></span></div>
+          <div class="sw"><span class="chip" style="background:#14434A"></span><span class="sw-txt"><span class="sw-name">connectingBg · dark</span><br><span class="sw-hex">#14434A</span></span></div>
+          <div class="sw"><span class="chip" style="background:#C9F4F5"></span><span class="sw-txt"><span class="sw-name">connectingOn · dark</span><br><span class="sw-hex">#C9F4F5</span></span></div>
+          <div class="sw"><span class="chip" style="background:#66757B"></span><span class="sw-txt"><span class="sw-name">offline</span><br><span class="sw-hex">#66757B</span></span></div>
+          <div class="sw"><span class="chip" style="background:#8A9A9F"></span><span class="sw-txt"><span class="sw-name">offline · dark</span><br><span class="sw-hex">#8A9A9F</span></span></div>
+          <div class="sw"><span class="chip" style="background:#B3261E"></span><span class="sw-txt"><span class="sw-name">lost</span><br><span class="sw-hex">#B3261E</span></span></div>
+          <div class="sw"><span class="chip" style="background:#FF8A80"></span><span class="sw-txt"><span class="sw-name">lost · dark</span><br><span class="sw-hex">#FF8A80</span></span></div>
+          <div class="sw"><span class="chip" style="background:#A8340C"></span><span class="sw-txt"><span class="sw-name">controlled</span><br><span class="sw-hex">#A8340C</span></span></div>
+          <div class="sw"><span class="chip" style="background:#FBE3D5"></span><span class="sw-txt"><span class="sw-name">controlledBg</span><br><span class="sw-hex">#FBE3D5</span></span></div>
+          <div class="sw"><span class="chip" style="background:#FF9159"></span><span class="sw-txt"><span class="sw-name">controlled · dark</span><br><span class="sw-hex">#FF9159</span></span></div>
+          <div class="sw"><span class="chip" style="background:#3A1E12"></span><span class="sw-txt"><span class="sw-name">controlledBg · dark</span><br><span class="sw-hex">#3A1E12</span></span></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3>会话页专属</h3><p class="gsub">SESSION / 永远深色，不随系统</p>
+        <div class="swatches">
+          <div class="sw"><span class="chip" style="background:#0A0E10"></span><span class="sw-txt"><span class="sw-name">viewport</span><br><span class="sw-hex">#0A0E10</span></span></div>
+          <div class="sw"><span class="chip" style="background:#11181B"></span><span class="sw-txt"><span class="sw-name">controlbar</span><br><span class="sw-hex">#11181B</span></span></div>
+          <div class="sw"><span class="chip" style="background:#C2410C"></span><span class="sw-txt"><span class="sw-name">badgeBg</span><br><span class="sw-hex">#C2410C</span></span></div>
+          <div class="sw"><span class="chip" style="background:#FFFFFF"></span><span class="sw-txt"><span class="sw-name">badgeOn</span><br><span class="sw-hex">#FFFFFF</span></span></div>
+          <div class="sw"><span class="chip" style="background:#232E31"></span><span class="sw-txt"><span class="sw-name">badgeOffBg</span><br><span class="sw-hex">#232E31</span></span></div>
+          <div class="sw"><span class="chip" style="background:#A3B3B8"></span><span class="sw-txt"><span class="sw-name">badgeOffOn</span><br><span class="sw-hex">#A3B3B8</span></span></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ 03 字体层级 ============ -->
+  <section class="block" id="type">
+    <div class="sec-head">
+      <span class="sec-num">03</span><h2>字体层级</h2>
+      <p class="sec-desc">中文 Noto Sans SC 回退 sans-serif；数字 Roboto Mono / tnum。字形示例按 sp≈px 预览。</p>
+    </div>
+    <table class="type-table">
+      <thead><tr><th>样式</th><th>规格 (sp / 行高 / 字重)</th><th>示例</th></tr></thead>
+      <tbody>
+        <tr><td><div class="t-name">Display-Code</div><div class="t-use">配对码</div></td><td class="t-spec">56 / 64 / 500 Mono</td><td class="t-sample"><span class="s-display">K7M2</span></td></tr>
+        <tr><td><div class="t-name">Headline</div><div class="t-use">本机码</div></td><td class="t-spec">32 / 40 / 600</td><td class="t-sample"><span class="s-headline">K7M2</span></td></tr>
+        <tr><td><div class="t-name">Title-Large</div><div class="t-use">页标题</div></td><td class="t-spec">22 / 28 / 600</td><td class="t-sample"><span class="s-tl">连接其他设备</span></td></tr>
+        <tr><td><div class="t-name">Title-Medium</div><div class="t-use">卡片标题</div></td><td class="t-spec">16 / 24 / 600</td><td class="t-sample"><span class="s-tm">最近连接</span></td></tr>
+        <tr><td><div class="t-name">Body-Large</div><div class="t-use">正文</div></td><td class="t-spec">16 / 24 / 400</td><td class="t-sample"><span class="s-bl">输入对方的四位配对码</span></td></tr>
+        <tr><td><div class="t-name">Body-Medium</div><div class="t-use">辅助说明</div></td><td class="t-spec">14 / 20 / 400</td><td class="t-sample"><span class="s-bm">配对码由信令服务器分配</span></td></tr>
+        <tr><td><div class="t-name">Label-Large</div><div class="t-use">按钮</div></td><td class="t-spec">14 / 20 / 600</td><td class="t-sample"><span class="s-ll">连接</span></td></tr>
+        <tr><td><div class="t-name">Label-Medium</div><div class="t-use">徽章</div></td><td class="t-spec">12 / 16 / 600</td><td class="t-sample"><span class="s-lm">在线·可被控</span></td></tr>
+        <tr><td><div class="t-name">Label-Small</div><div class="t-use">元信息</div></td><td class="t-spec">11 / 14 / 500</td><td class="t-sample"><span class="s-ls">固定不变</span></td></tr>
+        <tr><td><div class="t-name">Code-Meta</div><div class="t-use">配对码元信息</div></td><td class="t-spec">12 / 16 / 400 Mono</td><td class="t-sample"><span class="s-code">配对码 M4K7</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ 04 组件状态 ============ -->
+  <section class="block" id="components">
+    <div class="sec-head">
+      <span class="sec-num">04</span><h2>组件状态</h2>
+      <p class="sec-desc">配对格四态与状态徽章双重编码（图形 + 文字必填）。</p>
+    </div>
+    <div class="groups">
+      <div class="panel">
+        <h3>配对码分段格 · 64×80dp / gap 8dp</h3>
+        <div class="cell-states">
+          <div class="cell-item"><div class="codecell empty"></div><span class="cs-label">空态 / 1.5dp outline</span></div>
+          <div class="cell-item"><div class="codecell focus">K</div><span class="cs-label">聚焦 / 2dp primary + 1dp 12% 光晕</span></div>
+          <div class="cell-item"><div class="codecell filled">7</div><span class="cs-label">已填 / primaryContainer</span></div>
+          <div class="cell-item"><div class="codecell error">M</div><span class="cs-label">错误 / 2dp error</span><span class="cell-err">配对码 K7M2 不存在，请向对方确认</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>状态徽章 · 24dp 高 / 色 + 图形 + 文字</h3>
+        <div class="status-strip">
+          <span class="badge st-online" style="height:28px"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>在线·可被控</span>
+          <span class="badge st-online" style="height:28px"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>在线·未授权</span>
+          <span class="badge st-online" style="height:28px"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="currentColor"/></svg>在线·已关闭被控</span>
+          <span class="badge st-offline" style="height:28px"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>离线</span>
+          <span class="badge st-connecting" style="height:28px"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="3 2"/></svg>连接中</span>
+          <span class="badge st-lost" style="height:28px"><svg viewBox="0 0 12 12"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><line x1="2.8" y1="9.2" x2="9.2" y2="2.8" stroke="currentColor" stroke-width="1.5"/></svg>失联</span>
+          <span class="badge st-controlled" style="height:28px"><span class="dot" style="width:8px;height:8px;border-radius:999px;background:currentColor;display:inline-block"></span>被控中</span>
+          <span class="badge st-controlled-off" style="height:28px"><span class="dot" style="width:8px;height:8px;border-radius:999px;border:1px solid currentColor;display:inline-block"></span>控制已关闭</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 05 状态与文案 ============ -->
+  <section class="block" id="copy">
+    <div class="sec-head">
+      <span class="sec-num">05</span><h2>状态与文案</h2>
+      <p class="sec-desc">失败文案区分「码不存在」与「离线」；错误用页面内常驻条，不用 Toast；空态与锁屏黑屏为定稿字符串。</p>
+    </div>
+    <div class="copy-grid">
+      <div class="copy-card">
+        <div class="cc-label">ERROR · 码不存在（常驻条，非 Toast）</div>
+        <div class="errorbar"><span>配对码 K7M2 不存在，请向对方确认</span><span class="action-copy">复制指引</span></div>
+      </div>
+      <div class="copy-card">
+        <div class="cc-label">ERROR · 设备离线（与上者不同）</div>
+        <div class="errorbar"><span>设备 K7M2 当前离线，对方可能未开机或应用未运行</span><span class="action-copy">复制指引</span></div>
+      </div>
+      <div class="copy-card">
+        <div class="cc-label">EMPTY · 无历史连接</div>
+        <div class="cc-text">还没有连接过设备。在上方输入对方的四位配对码开始。</div>
+      </div>
+      <div class="copy-card">
+        <div class="cc-label">EMPTY · 无在线设备</div>
+        <div class="cc-text">暂无在线设备</div>
+        <div class="cc-text">对方上线后会自动出现在这里</div>
+      </div>
+      <div class="copy-card">
+        <div class="cc-label">SESSION · 锁屏黑屏</div>
+        <div class="cc-text">对方屏幕已锁定，请让对方在本机解锁</div>
+        <div class="cc-text">控制端无法远程解锁，这是系统安全限制</div>
+      </div>
+      <div class="copy-card">
+        <div class="cc-label">NOTE · 被控常驻条</div>
+        <div class="cc-text">被控中·控制方：Pixel 8 Pro</div>
+        <div class="cc-text">三 tab 任意页、状态栏下 24dp 条，0↔24dp / 240ms 推开内容而非悬浮遮挡；不可关闭、不可滑动关闭、不随滚动。</div>
+        <div class="cc-text">浅底 #FBE3D5 / 字 #7A2305 / 点 #A8340C；深底 #3A1E12 / 字 #FFB287 / 点 #FF9159。右侧 16dp chevron_end + 12sp「被控详情」，48×48dp 命中 slab 且不遮挡首个可点元素。常驻条无呼吸。</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span class="mono">SIGNAL DECK</span> · 动效：连接状态切换 240ms · 被控角标 1600ms 仅 alpha 呼吸 · 按压 80ms · 进入会话 200ms scrim + 300ms 淡入 · 减少动态下全部静态化，图形与文字保留。<br>
+    本页为设计提案预览，不改动 App 源码；Android 资源映射见 README.md 与 tokens/。
+  </footer>
+
+</main>
+
+<script>
+(function () {
+  var stage = document.getElementById('stage');
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('[data-theme-btn]'));
+  buttons.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var theme = btn.getAttribute('data-theme-btn');
+      stage.setAttribute('data-preview-theme', theme);
+      buttons.forEach(function (b) {
+        var on = (b === btn);
+        b.classList.toggle('is-active', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>

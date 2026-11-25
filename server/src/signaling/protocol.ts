@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PAIRING_CODE_PATTERN } from "./pairing.js";
 
 export const deviceRoleSchema = z.enum(["controller", "agent"]);
 export type DeviceRole = z.infer<typeof deviceRoleSchema>;
@@ -17,8 +18,8 @@ export const registerMessageSchema = z.object({
 
 export const resolveCodeMessageSchema = z.object({
   type: z.literal("resolve_code"),
-  /** 两位配对码，00–99。前导零有意义，必须是字符串。 */
-  code: z.string().trim().regex(/^\d{2}$/, "配对码必须是两位数字"),
+  /** 四位配对码，大写字母 + 数字，剔除 0/O/1/I/L。与生成端共用同一正则。 */
+  code: z.string().trim().regex(PAIRING_CODE_PATTERN, "配对码必须是四位字母或数字"),
 });
 
 export const listDevicesMessageSchema = z.object({
@@ -51,7 +52,7 @@ export interface PublicDevice {
   deviceId: string;
   role: DeviceRole;
   deviceName: string;
-  /** 两位配对码。连接时用它寻址，比 deviceId 好念也好记。 */
+  /** 四位配对码。连接时用它寻址，比 deviceId 好念也好记。 */
   pairCode?: string;
   connectedAt: string;
   /**

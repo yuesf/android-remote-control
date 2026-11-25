@@ -24,7 +24,7 @@ class SignalingClient(private val listener: Listener) {
         fun onServerError(code: String, message: String)
         fun onIceServersChanged(servers: List<IceServerSpec>)
 
-        /** 服务端分配的本机两位配对码。断线后依然保留，重连也不会变。 */
+        /** 服务端分配的本机四位配对码。断线后依然保留，重连也不会变。 */
         fun onPairCodeChanged(pairCode: String?) {}
         /** 按码查询到目标设备（含「码有效但设备离线」）。 */
         fun onCodeResolved(resolution: CodeResolution) {}
@@ -141,7 +141,7 @@ class SignalingClient(private val listener: Listener) {
     fun refreshDevices(): Boolean = sendJson(JSONObject().put("type", "list_devices"))
 
     /**
-     * 用两位配对码查目标设备。
+     * 用四位配对码查目标设备。
      * 返回 false 只代表「这条消息没发出去」（离线/没连上），不代表码无效；
      * 码无效会走服务端错误 CODE_NOT_FOUND。
      */

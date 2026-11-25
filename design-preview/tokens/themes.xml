@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  信号台 SIGNAL DECK · 主题与字阶片段
+  放置位置：app/src/main/res/values/themes.xml（与现有文件「合并」，不要整文件替换）
+
+  - 主主题颜色由 @color/md_* 与 @color/sem_* 自动从 values / values-night 解析。
+  - 语义色同时暴露为 ?attr/semXxx，layout / drawable 一律用 ?attr/ 或 @color/token，禁止硬编码 HEX。
+    失联必须用 sem_lost / sem_lost_bg，不得拿 colorError 顶替。
+  - Theme.RemoteControl.Session 非 DayNight、永久深色，windowBackground = @color/sess_viewport。
+  - 原 Theme.RemoteControl.Transparent（采集授权空壳，必须全透明）不在本片段内，合并时原样保留。
+  - fontScale > 1.3 时：首页「最近连接」/ 设备页在线列表由一行两列降为一行一列，
+    按钮撑满卡片宽度、状态文字恢复单行；这是布局降级，11sp 绝不降到 10sp 以下，
+    状态形状（实心/空心/虚线弧/斜杠点）不可被挤掉。此规则优先于「大屏仍保持两列」。
+-->
+<resources>
+
+    <!-- ========== 语义色 attr 声明：供 ?attr/semXxx 引用 ========== -->
+    <attr name="semOnline" format="color"/>
+    <attr name="semOnlineBg" format="color"/>
+    <attr name="semConnecting" format="color"/>
+    <attr name="semConnectingBg" format="color"/>
+    <attr name="semConnectingOn" format="color"/>
+    <attr name="semOffline" format="color"/>
+    <attr name="semOfflineBg" format="color"/>
+    <attr name="semLost" format="color"/>
+    <attr name="semLostBg" format="color"/>
+    <attr name="semControlled" format="color"/>
+    <attr name="semControlledBg" format="color"/>
+    <attr name="semControlledBarOn" format="color"/>
+
+    <!-- ========== 主主题：三 tab 页面（首页 / 设备 / 设置） ========== -->
+    <style name="Theme.RemoteControl" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/md_primary</item>
+        <item name="colorOnPrimary">@color/md_on_primary</item>
+        <item name="colorPrimaryContainer">@color/md_primary_container</item>
+        <item name="colorOnPrimaryContainer">@color/md_on_primary_container</item>
+        <item name="colorSecondary">@color/md_secondary</item>
+        <item name="colorOnSecondary">@color/md_on_secondary</item>
+        <item name="colorSecondaryContainer">@color/md_secondary_container</item>
+        <item name="colorOnSecondaryContainer">@color/md_on_secondary_container</item>
+        <item name="colorSurface">@color/md_surface</item>
+        <item name="colorSurfaceVariant">@color/md_surface_variant</item>
+        <item name="colorOnSurface">@color/md_on_surface</item>
+        <item name="colorOnSurfaceVariant">@color/md_on_surface_variant</item>
+        <item name="colorOutline">@color/md_outline</item>
+        <item name="colorOutlineVariant">@color/md_outline_variant</item>
+        <item name="colorError">@color/md_error</item>
+        <item name="colorErrorContainer">@color/md_error_container</item>
+        <item name="android:colorBackground">@color/md_background</item>
+
+        <!-- 语义色 attr 映射（浅/深自动切换） -->
+        <item name="semOnline">@color/sem_online</item>
+        <item name="semOnlineBg">@color/sem_online_bg</item>
+        <item name="semConnecting">@color/sem_connecting</item>
+        <item name="semConnectingBg">@color/sem_connecting_bg</item>
+        <item name="semConnectingOn">@color/sem_connecting_on</item>
+        <item name="semOffline">@color/sem_offline</item>
+        <item name="semOfflineBg">@color/sem_offline_bg</item>
+        <item name="semLost">@color/sem_lost</item>
+        <item name="semLostBg">@color/sem_lost_bg</item>
+        <item name="semControlled">@color/sem_controlled</item>
+        <item name="semControlledBg">@color/sem_controlled_bg</item>
+        <item name="semControlledBarOn">@color/sem_controlled_bar_on</item>
+
+        <!-- 系统栏与窗口背景：所有 Activity 的 windowBackground 必须与 surface 同色，否则启动白闪 -->
+        <item name="android:windowBackground">@color/md_surface</item>
+        <item name="android:statusBarColor">@color/md_surface</item>
+        <item name="android:navigationBarColor">@color/md_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+
+        <!-- 卡片 elevation = 0：边界由 outlineVariant 1dp 描边定义，禁止大投影 / 渐变。
+             在各卡片布局 / ShapeAppearance 上显式设 android:elevation="0dp"，
+             不要在主题里放无命名空间的 elevation item（aapt 无法解析）。 -->
+    </style>
+
+    <!-- ========== 会话主题：非 DayNight，永久深色全屏 ========== -->
+    <style name="Theme.RemoteControl.Session" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/sess_viewport</item>
+        <item name="android:colorBackground">@color/sess_viewport</item>
+        <item name="colorSurface">@color/sess_controlbar</item>
+        <item name="android:statusBarColor">@color/sess_controlbar</item>
+        <item name="android:navigationBarColor">@color/sess_viewport</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <!-- 不要用 configChanges 绕 DayNight 重建 -->
+    </style>
+
+    <!-- ========== 字阶 TextAppearance ==========
+         中文：Noto Sans SC 回退 sans-serif；数字：Roboto Mono / tnum。
+         Android 内置只有 monospace 等宽族；若要精确匹配 Roboto Mono，
+         请自行把字体文件放入 res/font/ 并把 fontFamily 改为 @font/roboto_mono。
+         所有 size 单位为 sp，lineHeight 单位 sp。 -->
+    <style name="TextAppearance.SignalDeck.DisplayCode" parent="TextAppearance.Material3.DisplayLarge">
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textSize">56sp</item>
+        <item name="android:lineHeight">64sp</item>
+        <item name="android:textFontWeight">500</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+    <style name="TextAppearance.SignalDeck.Headline" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textSize">32sp</item>
+        <item name="android:lineHeight">40sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+    <style name="TextAppearance.SignalDeck.TitleLarge" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textSize">22sp</item>
+        <item name="android:lineHeight">28sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+    <style name="TextAppearance.SignalDeck.TitleMedium" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textSize">16sp</item>
+        <item name="android:lineHeight">24sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+    <style name="TextAppearance.SignalDeck.BodyLarge" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:textSize">16sp</item>
+        <item name="android:lineHeight">24sp</item>
+        <item name="android:textFontWeight">400</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+    <style name="TextAppearance.SignalDeck.BodyMedium" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textSize">14sp</item>
+        <item name="android:lineHeight">20sp</item>
+        <item name="android:textFontWeight">400</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+    <style name="TextAppearance.SignalDeck.LabelLarge" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textSize">14sp</item>
+        <item name="android:lineHeight">20sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+    <style name="TextAppearance.SignalDeck.LabelMedium" parent="TextAppearance.Material3.LabelMedium">
+        <item name="android:textSize">12sp</item>
+        <item name="android:lineHeight">16sp</item>
+        <item name="android:textFontWeight">600</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+    <style name="TextAppearance.SignalDeck.LabelSmall" parent="TextAppearance.Material3.LabelSmall">
+        <item name="android:textSize">11sp</item>
+        <item name="android:lineHeight">14sp</item>
+        <item name="android:textFontWeight">500</item>
+        <item name="android:textColor">@color/md_on_surface</item>
+    </style>
+    <style name="TextAppearance.SignalDeck.CodeMeta" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:lineHeight">16sp</item>
+        <item name="android:textFontWeight">400</item>
+        <item name="android:fontFeatureSettings">tnum</item>
+        <item name="android:textColor">@color/md_on_surface_variant</item>
+    </style>
+
+    <!-- ========== 动效时长片段（供 res/animator 或代码引用） ==========
+         连接状态切换 240ms / 被控常驻条 0↔24dp 240ms FastOutSlowIn（推开内容，不悬浮）/
+         会话页 32dp 被控角标 alpha 0.82↔1 1600ms 呼吸（常驻条不呼吸）/
+         按压 80ms / 进入会话 200ms 12% 黑 scrim + 300ms 淡入 / 退出会话 240ms 淡出。
+         系统「减少动态效果」下所有循环动效改静态，但状态图形与文字保留。 -->
+    <item name="sd_motion_state_ms" type="integer">240</item>
+    <item name="sd_motion_bar_ms" type="integer">240</item>
+    <item name="sd_motion_breathe_ms" type="integer">1600</item>
+    <item name="sd_motion_press_ms" type="integer">80</item>
+    <item name="sd_motion_scrim_ms" type="integer">200</item>
+    <item name="sd_motion_fade_ms" type="integer">300</item>
+
+</resources>

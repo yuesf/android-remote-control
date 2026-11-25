@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 信号台 SIGNAL DECK · 4dp 网格间距与组件尺寸 token -->
+<resources>
+    <dimen name="space_xs">4dp</dimen>
+    <dimen name="space_sm">8dp</dimen>
+    <dimen name="space_md">12dp</dimen>
+    <dimen name="space_lg">16dp</dimen>
+    <dimen name="space_xl">24dp</dimen>
+    <dimen name="space_2xl">32dp</dimen>
+    <dimen name="screen_gutter">16dp</dimen>
+    <dimen name="touch_min">48dp</dimen>
+
+    <dimen name="radius_xs">4dp</dimen>
+    <dimen name="radius_sm">8dp</dimen>
+    <dimen name="radius_md">12dp</dimen>
+    <dimen name="radius_lg">16dp</dimen>
+    <dimen name="radius_pill">999dp</dimen>
+
+    <dimen name="stroke_hairline">1dp</dimen>
+    <dimen name="stroke_control">1.5dp</dimen>
+    <dimen name="stroke_focus">2dp</dimen>
+
+    <dimen name="nav_height">72dp</dimen>
+    <dimen name="controlbar_height">56dp</dimen>
+    <dimen name="device_card_min_height">72dp</dimen>
+    <dimen name="code_cell_size">64dp</dimen>
+</resources>

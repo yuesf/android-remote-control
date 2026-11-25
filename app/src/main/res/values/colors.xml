@@ -1,7 +1,63 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  信号台 SIGNAL DECK · 浅色 token
+  md_* 基础色 / sem_* 语义状态色 / sess_* 会话页常量（永远深色，不在 values-night 重复）
+  布局与 drawable 一律引用 token，不写死 HEX。
+-->
 <resources>
-    <color name="brand_primary">#185FA5</color>
-    <color name="brand_primary_dark">#0C447C</color>
-    <color name="brand_surface">#F6F7F8</color>
-    <color name="brand_outline">#C8CDD2</color>
+    <!-- ========== 基础 Material 色 ========== -->
+    <color name="md_primary">#0B6B73</color>
+    <color name="md_on_primary">#FFFFFF</color>
+    <color name="md_primary_container">#D6EEF0</color>
+    <color name="md_on_primary_container">#06383D</color>
+    <color name="md_secondary">#47565C</color>
+    <color name="md_on_secondary">#FFFFFF</color>
+    <color name="md_secondary_container">#DFE8EA</color>
+    <color name="md_on_secondary_container">#29383D</color>
+    <color name="md_surface">#FBFCFC</color>
+    <color name="md_background">#F2F5F5</color>
+    <color name="md_on_surface">#162226</color>
+    <color name="md_surface_variant">#E6ECEC</color>
+    <color name="md_on_surface_variant">#526267</color>
+    <color name="md_outline">#B9C5C7</color>
+    <color name="md_outline_variant">#DCE4E5</color>
+    <color name="md_error">#B3261E</color>
+    <color name="md_error_container">#F9DEDC</color>
+
+    <!-- ========== 语义状态色（浅色） ========== -->
+    <color name="sem_online">#0B7A5B</color>
+    <color name="sem_online_bg">#DDF2E9</color>
+    <color name="sem_connecting">#0B6B73</color>
+    <color name="sem_connecting_bg">#D6EEF0</color>
+    <color name="sem_connecting_on">#06383D</color>
+    <color name="sem_offline">#66757B</color>
+    <color name="sem_offline_bg">#E6ECEC</color>
+    <color name="sem_lost">#B3261E</color>
+    <color name="sem_lost_bg">#F9DEDC</color>
+    <color name="sem_controlled">#A8340C</color>
+    <color name="sem_controlled_bg">#FBE3D5</color>
+    <color name="sem_controlled_bar_on">#7A2305</color>
+
+    <!-- ========== 会话页常量（永远深色，不随系统主题翻转） ========== -->
+    <color name="sess_viewport">#0A0E10</color>
+    <color name="sess_controlbar">#11181B</color>
+    <!-- 控制栏叠在画面上，用同色半透明避免把远端画面整块盖死 -->
+    <color name="sess_controlbar_scrim">#CC11181B</color>
+    <color name="sess_controlbar_stroke">#293439</color>
+    <color name="sess_handle_scrim">#99000000</color>
+    <color name="sess_handle_stroke">#4DFFFFFF</color>
+    <color name="sess_primary">#4ED3D6</color>
+    <color name="sess_on_primary">#052A2E</color>
+    <color name="sess_text">#E9F0F1</color>
+    <color name="sess_text_secondary">#A3B3B8</color>
+    <color name="sess_badge_bg">#C2410C</color>
+    <color name="sess_badge_on">#FFFFFF</color>
+    <color name="sess_badge_off_bg">#232E31</color>
+    <color name="sess_badge_off_on">#A3B3B8</color>
+
+    <!-- ========== 兼容别名：旧代码引用，指向新 token（深色下自动解析到 values-night 值） ========== -->
+    <color name="brand_primary">@color/md_primary</color>
+    <color name="brand_primary_dark">@color/md_on_primary_container</color>
+    <color name="brand_surface">@color/md_background</color>
+    <color name="brand_outline">@color/md_outline</color>
 </resources>

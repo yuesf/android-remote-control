@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/brand_surface"
+    android:background="@color/md_background"
     android:orientation="vertical">
 
     <!-- 顶栏：所有页共用，尽量矮，把高度留给内容 -->
@@ -30,7 +30,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:textColor="#8A8F98"
+            android:textColor="@color/md_on_surface_variant"
             android:textSize="12sp"
             tools:text="HONOR FNE-AN00 · Android 14 (API 34)" />
 
@@ -40,7 +40,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:text="@string/status_disconnected"
-            android:textColor="#5F6368"
+            android:textColor="@color/md_on_surface_variant"
             android:textSize="12sp" />
     </LinearLayout>
 
@@ -68,10 +68,10 @@
                 <com.google.android.material.card.MaterialCardView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    app:cardBackgroundColor="#FFFFFF"
+                    app:cardBackgroundColor="@color/md_surface"
                     app:cardCornerRadius="12dp"
                     app:cardElevation="0dp"
-                    app:strokeColor="@color/brand_outline"
+                    app:strokeColor="@color/md_outline_variant"
                     app:strokeWidth="1dp">
 
                     <LinearLayout
@@ -93,29 +93,102 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="6dp"
                             android:text="@string/home_body"
-                            android:textColor="#5F6368"
+                            android:textColor="@color/md_on_surface_variant"
                             android:textSize="13sp" />
 
-                        <com.google.android.material.textfield.TextInputLayout
-                            android:id="@+id/pairCodeInputLayout"
+                        <!-- 四位配对码：四个分段格，每格一个大写字母或数字，自动跳焦/退格回退 -->
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center_horizontal"
+                            android:layout_marginTop="16dp"
+                            android:text="@string/pair_code_input_hint"
+                            android:textColor="@color/md_on_surface_variant"
+                            android:textSize="12sp" />
+
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="16dp"
-                            android:hint="@string/pair_code_input_hint"
-                            app:boxBackgroundMode="outline">
+                            android:layout_marginTop="8dp"
+                            android:gravity="center_horizontal"
+                            android:orientation="horizontal">
 
-                            <com.google.android.material.textfield.TextInputEditText
-                                android:id="@+id/pairCodeInput"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
+                            <EditText
+                                android:id="@+id/pairCodeCell1"
+                                android:layout_width="64dp"
+                                android:layout_height="80dp"
+                                android:background="@drawable/bg_code_cell"
+                                android:gravity="center"
+                                android:imeOptions="actionNext"
+                                android:importantForAutofill="no"
+                                android:inputType="text|textCapCharacters|textNoSuggestions"
+                                android:maxLength="1"
+                                android:padding="0dp"
+                                android:singleLine="true"
+                                android:textColor="@color/md_on_surface"
+                                android:textSize="40sp"
+                                android:typeface="monospace" />
+
+                            <EditText
+                                android:id="@+id/pairCodeCell2"
+                                android:layout_width="64dp"
+                                android:layout_height="80dp"
+                                android:layout_marginStart="8dp"
+                                android:background="@drawable/bg_code_cell"
+                                android:gravity="center"
+                                android:imeOptions="actionNext"
+                                android:importantForAutofill="no"
+                                android:inputType="text|textCapCharacters|textNoSuggestions"
+                                android:maxLength="1"
+                                android:padding="0dp"
+                                android:singleLine="true"
+                                android:textColor="@color/md_on_surface"
+                                android:textSize="40sp"
+                                android:typeface="monospace" />
+
+                            <EditText
+                                android:id="@+id/pairCodeCell3"
+                                android:layout_width="64dp"
+                                android:layout_height="80dp"
+                                android:layout_marginStart="8dp"
+                                android:background="@drawable/bg_code_cell"
+                                android:gravity="center"
+                                android:imeOptions="actionNext"
+                                android:importantForAutofill="no"
+                                android:inputType="text|textCapCharacters|textNoSuggestions"
+                                android:maxLength="1"
+                                android:padding="0dp"
+                                android:singleLine="true"
+                                android:textColor="@color/md_on_surface"
+                                android:textSize="40sp"
+                                android:typeface="monospace" />
+
+                            <EditText
+                                android:id="@+id/pairCodeCell4"
+                                android:layout_width="64dp"
+                                android:layout_height="80dp"
+                                android:layout_marginStart="8dp"
+                                android:background="@drawable/bg_code_cell"
                                 android:gravity="center"
                                 android:imeOptions="actionDone"
-                                android:inputType="number"
-                                android:letterSpacing="0.2"
-                                android:maxLength="2"
-                                android:maxLines="1"
-                                android:textSize="28sp" />
-                        </com.google.android.material.textfield.TextInputLayout>
+                                android:importantForAutofill="no"
+                                android:inputType="text|textCapCharacters|textNoSuggestions"
+                                android:maxLength="1"
+                                android:padding="0dp"
+                                android:singleLine="true"
+                                android:textColor="@color/md_on_surface"
+                                android:textSize="40sp"
+                                android:typeface="monospace" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/pairCodeErrorText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:textColor="@color/md_error"
+                            android:textSize="12sp"
+                            android:visibility="gone" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/connectByCodeButton"
@@ -130,8 +203,59 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="10dp"
                             android:text="@string/home_hint_goto_devices"
-                            android:textColor="#888780"
+                            android:textColor="@color/md_on_surface_variant"
                             android:textSize="12sp" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- 最近连接过的设备：本地持久化历史，点击卡片即可一键重连 -->
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    app:cardBackgroundColor="@color/md_surface"
+                    app:cardCornerRadius="12dp"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/md_outline_variant"
+                    app:strokeWidth="1dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/recent_connections_title"
+                            android:textColor="@color/brand_primary_dark"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:text="@string/recent_connections_body"
+                            android:textColor="@color/md_on_surface_variant"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:id="@+id/emptyRecentText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="12dp"
+                            android:text="@string/recent_connections_empty"
+                            android:textColor="@color/md_on_surface_variant"
+                            android:textSize="13sp"
+                            android:visibility="gone" />
+
+                        <LinearLayout
+                            android:id="@+id/recentDeviceListContainer"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
             </LinearLayout>
@@ -157,10 +281,10 @@
                 <com.google.android.material.card.MaterialCardView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    app:cardBackgroundColor="#FFFFFF"
+                    app:cardBackgroundColor="@color/md_surface"
                     app:cardCornerRadius="12dp"
                     app:cardElevation="0dp"
-                    app:strokeColor="@color/brand_outline"
+                    app:strokeColor="@color/md_outline_variant"
                     app:strokeWidth="1dp">
 
                     <LinearLayout
@@ -173,7 +297,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/pair_code_label"
-                            android:textColor="#444441"
+                            android:textColor="@color/md_on_surface"
                             android:textSize="13sp" />
 
                         <TextView
@@ -194,7 +318,7 @@
                             android:layout_height="wrap_content"
                             android:gravity="center"
                             android:text="@string/pair_code_hint"
-                            android:textColor="#888780"
+                            android:textColor="@color/md_on_surface_variant"
                             android:textSize="12sp" />
 
                         <com.google.android.material.button.MaterialButton
@@ -213,10 +337,10 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    app:cardBackgroundColor="#FFFFFF"
+                    app:cardBackgroundColor="@color/md_surface"
                     app:cardCornerRadius="12dp"
                     app:cardElevation="0dp"
-                    app:strokeColor="@color/brand_outline"
+                    app:strokeColor="@color/md_outline_variant"
                     app:strokeWidth="1dp">
 
                     <LinearLayout
@@ -238,7 +362,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="6dp"
                             android:text="@string/controller_section_body"
-                            android:textColor="#5F6368"
+                            android:textColor="@color/md_on_surface_variant"
                             android:textSize="13sp" />
 
                         <com.google.android.material.button.MaterialButton
@@ -271,7 +395,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
                             android:text="@string/no_devices"
-                            android:textColor="#888780"
+                            android:textColor="@color/md_on_surface_variant"
                             android:textSize="13sp" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
@@ -298,10 +422,10 @@
                 <com.google.android.material.card.MaterialCardView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    app:cardBackgroundColor="#FFFFFF"
+                    app:cardBackgroundColor="@color/md_surface"
                     app:cardCornerRadius="12dp"
                     app:cardElevation="0dp"
-                    app:strokeColor="@color/brand_outline"
+                    app:strokeColor="@color/md_outline_variant"
                     app:strokeWidth="1dp">
 
                     <LinearLayout
@@ -382,10 +506,10 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    app:cardBackgroundColor="#FFFFFF"
+                    app:cardBackgroundColor="@color/md_surface"
                     app:cardCornerRadius="12dp"
                     app:cardElevation="0dp"
-                    app:strokeColor="@color/brand_outline"
+                    app:strokeColor="@color/md_outline_variant"
                     app:strokeWidth="1dp">
 
                     <LinearLayout
@@ -407,7 +531,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="6dp"
                             android:text="@string/agent_section_body"
-                            android:textColor="#5F6368"
+                            android:textColor="@color/md_on_surface_variant"
                             android:textSize="13sp" />
 
                         <com.google.android.material.button.MaterialButton
@@ -443,7 +567,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="8dp"
-                            android:textColor="#5F6368"
+                            android:textColor="@color/md_on_surface_variant"
                             android:textSize="13sp" />
 
                         <com.google.android.material.button.MaterialButton
@@ -460,7 +584,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="4dp"
-                            android:textColor="#5F6368"
+                            android:textColor="@color/md_on_surface_variant"
                             android:textSize="13sp" />
 
                         <com.google.android.material.button.MaterialButton
@@ -483,12 +607,83 @@
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/updateSection"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    app:cardBackgroundColor="@color/md_surface"
+                    app:cardCornerRadius="12dp"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/md_outline_variant"
+                    app:strokeWidth="1dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="16dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/update_section_title"
+                            android:textColor="@color/brand_primary_dark"
+                            android:textSize="16sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/updateCurrentVersionText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:textColor="@color/md_on_surface_variant"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:id="@+id/updateStatusText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:textColor="@color/md_on_surface_variant"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:id="@+id/updateNotesText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:textColor="@color/md_on_surface_variant"
+                            android:textSize="12sp"
+                            android:visibility="gone" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/updateButton"
+                            style="@style/Widget.Material3.Button.TonalButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="10dp"
+                            android:text="@string/update_button"
+                            android:textAllCaps="false"
+                            android:visibility="gone" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/recheckUpdateButton"
+                            style="@style/Widget.Material3.Button.TextButton"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="@string/update_check_manually"
+                            android:textAllCaps="false" />
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
                 <TextView
                     android:id="@+id/diagnosticsText"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
-                    android:textColor="#5F5E5A"
+                    android:textColor="@color/md_on_surface_variant"
                     android:textIsSelectable="true"
                     android:textSize="12sp"
                     tools:text="诊断：WS 在线 / 信号 0 条 / 服务 运行中 / 采集 就绪" />
@@ -498,7 +693,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="16dp"
                     android:text="@string/test_only_notice"
-                    android:textColor="#888780"
+                    android:textColor="@color/md_on_surface_variant"
                     android:textSize="12sp" />
             </LinearLayout>
         </androidx.core.widget.NestedScrollView>
@@ -508,7 +703,7 @@
         android:id="@+id/bottomNav"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="#FFFFFF"
+        android:background="@color/md_surface"
         app:itemIconTint="@color/nav_item_color"
         app:itemTextColor="@color/nav_item_color"
         app:labelVisibilityMode="labeled"

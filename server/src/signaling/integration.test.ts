@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import WebSocket from "ws";
 import type { AppConfig } from "../config.js";
 import type { Logger } from "../shared/logger.js";
+import { PAIRING_CODE_ALPHABET, PAIRING_CODE_PATTERN, PairingCodeStore } from "./pairing.js";
 import { DeviceRegistry } from "./registry.js";
 import { attachSignalingServer } from "./server.js";
 
@@ -163,7 +164,7 @@ test("two authenticated devices register and relay a control request", async () 
   });
 });
 
-test("each device gets a fixed two-digit pairing code resolvable by the other side", async () => {
+test("each device gets a fixed four-character pairing code resolvable by the other side", async () => {
   const token = "pairing-test-token-2026";
   const config: AppConfig = {
     port: 0,
@@ -191,8 +192,8 @@ test("each device gets a fixed two-digit pairing code resolvable by the other si
 
   const agentReady = await agent.nextMessage((message) => message.type === "ready");
   const controllerReady = await controller.nextMessage((message) => message.type === "ready");
-  assert.match(agentReady.pairCode, /^\d{2}$/);
-  assert.match(controllerReady.pairCode, /^\d{2}$/);
+  assert.match(agentReady.pairCode, PAIRING_CODE_PATTERN);
+  assert.match(controllerReady.pairCode, PAIRING_CODE_PATTERN);
   assert.notEqual(agentReady.pairCode, controllerReady.pairCode);
 
   // 按码解析：拿到的是被控机的 deviceId，且标记为在线。
@@ -203,9 +204,14 @@ test("each device gets a fixed two-digit pairing code resolvable by the other si
   assert.equal(resolved.online, true);
 
   // 未分配的码必须是明确的 CODE_NOT_FOUND，不能静默。
+  // 码是随机分配的，不能再枚举固定值，改为随机生成一个未占用的。
   const used = new Set([agentReady.pairCode, controllerReady.pairCode]);
-  const free = ["00", "01", "02", "03", "04"].find((code) => !used.has(code));
-  assert.ok(free);
+  let free = "";
+  do {
+    free = Array.from({ length: 4 }, () =>
+      PAIRING_CODE_ALPHABET[Math.floor(Math.random() * PAIRING_CODE_ALPHABET.length)],
+    ).join("");
+  } while (used.has(free));
   controller.socket.send(JSON.stringify({ type: "resolve_code", code: free }));
   const notFound = await controller.nextMessage((message) => message.type === "error");
   assert.equal(notFound.code, "CODE_NOT_FOUND");
@@ -221,4 +227,34 @@ test("each device gets a fixed two-digit pairing code resolvable by the other si
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
+});
+
+test("legacy two-digit codes are migrated away on load", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pairing-migrate-"));
+  const file = join(dir, "codes.json");
+  const legacyId = "3f2a1c98-9f51-4b2e-8a67-0e1d2c3b4a5f";
+  writeFileSync(
+    file,
+    JSON.stringify({
+      version: 1,
+      devices: [
+        { code: "37", deviceId: legacyId, deviceName: "老设备", assignedAt: "2026-01-01T00:00:00.000Z" },
+      ],
+    }),
+  );
+
+  const store = new PairingCodeStore(file);
+  // 旧格式码被丢弃，设备下次注册会领新码。
+  assert.equal(store.codeOf(legacyId), undefined);
+  assert.equal(store.resolve("37"), undefined);
+  assert.equal(store.size, 0);
+
+  const fresh = store.assign(legacyId, "老设备");
+  assert.match(fresh.code, PAIRING_CODE_PATTERN);
+  assert.equal(store.codeOf(legacyId), fresh.code);
+  // 迁移后立即回写，旧码不能残留在磁盘上等下次重启又被读回来。
+  const persisted = JSON.parse(readFileSync(file, "utf8")) as {
+    devices: Array<{ code: string }>;
+  };
+  assert.equal(persisted.devices.some((item) => item.code === "37"), false);
 });

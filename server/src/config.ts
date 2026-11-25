@@ -13,7 +13,7 @@ export interface AppConfig {
   maxWebSocketPayloadBytes: number;
   logLevel: LogLevel;
   iceServers: IceServerSetting[];
-  /** 两位配对码分配表的落盘位置，重启后码必须保持不变。 */
+  /** 四位配对码分配表的落盘位置，重启后码必须保持不变。 */
   pairingCodeFile: string;
 }
 

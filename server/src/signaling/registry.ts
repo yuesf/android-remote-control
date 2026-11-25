@@ -74,7 +74,7 @@ export class DeviceRegistry {
     return this.devices.get(deviceId);
   }
 
-  /** 按两位配对码找在线设备。码可能属于一台离线设备，这里只回答「在线的是哪台」。 */
+  /** 按四位配对码找在线设备。码可能属于一台离线设备，这里只回答「在线的是哪台」。 */
   findByPairCode(pairCode: string): RegisteredDevice | undefined {
     for (const device of this.devices.values()) {
       if (device.pairCode === pairCode) {

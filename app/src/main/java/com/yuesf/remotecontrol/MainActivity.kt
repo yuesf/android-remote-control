@@ -3,7 +3,9 @@ package com.yuesf.remotecontrol
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
@@ -12,7 +14,13 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.Editable
+import android.text.InputFilter
+import android.text.TextWatcher
+import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -21,6 +29,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -33,8 +42,10 @@ import com.yuesf.remotecontrol.accessibility.CaptureAutoApprove
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.agent.RemoteAgentService
 import com.yuesf.remotecontrol.data.AppPreferences
+import com.yuesf.remotecontrol.data.ConnectedDevice
 import com.yuesf.remotecontrol.debug.FileLog
 import com.yuesf.remotecontrol.data.SpaceGuard
+import com.yuesf.remotecontrol.data.UpdateChecker
 import com.yuesf.remotecontrol.data.normalizeServerUrl
 import com.yuesf.remotecontrol.databinding.ActivityMainBinding
 import com.yuesf.remotecontrol.signaling.CodeResolution
@@ -45,6 +56,7 @@ import com.yuesf.remotecontrol.signaling.SignalingRepository
 import com.yuesf.remotecontrol.signaling.SignalingState
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.util.Date
@@ -75,6 +87,11 @@ class MainActivity : AppCompatActivity() {
     private val presenceHandler = Handler(Looper.getMainLooper())
     private var presenceTickCount = 0
 
+    /** 更新检查：当前检查到的可用更新；null 表示无更新/检查失败。 */
+    private var availableUpdate: UpdateChecker.UpdateInfo? = null
+    private var updateCheckInFlight = false
+    private var updateDownloadInFlight = false
+
     /**
      * 在线状态刷新节奏。
      *
@@ -90,6 +107,7 @@ class MainActivity : AppCompatActivity() {
             }
             if (latestDevices.isNotEmpty()) {
                 renderDevices(latestDevices)
+                renderRecentDevices()
             }
             presenceHandler.postDelayed(this, PRESENCE_TICK_MS)
         }
@@ -218,6 +236,105 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    // ===================== 版本检查与更新 =====================
+
+    /** 设置页展示本机版本；每次进设置页都刷新，避免升级后显示旧号。 */
+    private fun renderCurrentVersion() {
+        binding.updateCurrentVersionText.text = getString(
+            R.string.update_current_version,
+            UpdateChecker.currentVersionLabel(this),
+        )
+    }
+
+    /**
+     * 进入设置页自动检查一次。加 in-flight 保护：切页/旋转不会重复发请求。
+     * 结果直接落到 UI；失败只在状态行提示，不弹窗打扰。
+     */
+    private fun checkForUpdate() {
+        if (updateCheckInFlight || updateDownloadInFlight) return
+        updateCheckInFlight = true
+        binding.updateStatusText.setText(R.string.update_checking)
+        binding.updateNotesText.visibility = View.GONE
+        binding.updateButton.visibility = View.GONE
+        lifecycleScope.launch {
+            val result = UpdateChecker.check()
+            updateCheckInFlight = false
+            availableUpdate = null
+            when (result) {
+                is UpdateChecker.CheckResult.Available -> {
+                    availableUpdate = result.info
+                    binding.updateStatusText.text = getString(
+                        R.string.update_available,
+                        result.info.versionName,
+                    )
+                    if (result.info.releaseNotes.isNotBlank()) {
+                        binding.updateNotesText.text = result.info.releaseNotes
+                        binding.updateNotesText.visibility = View.VISIBLE
+                    }
+                    binding.updateButton.visibility = View.VISIBLE
+                }
+
+                UpdateChecker.CheckResult.UpToDate -> {
+                    binding.updateStatusText.setText(R.string.update_up_to_date)
+                }
+
+                is UpdateChecker.CheckResult.Failed -> {
+                    binding.updateStatusText.text = result.message
+                }
+            }
+        }
+    }
+
+    /** 下载 APK 并拉起系统安装器。全程在协程里，进度回写按钮文字。 */
+    private fun downloadAndInstall(info: UpdateChecker.UpdateInfo) {
+        if (updateDownloadInFlight) return
+        if (!packageManager.canRequestPackageInstalls()) {
+            toast(getString(R.string.update_install_unknown_blocked))
+            runCatching {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName"),
+                    ),
+                )
+            }
+            return
+        }
+        updateDownloadInFlight = true
+        binding.updateButton.isEnabled = false
+        lifecycleScope.launch {
+            try {
+                val apk = UpdateChecker.downloadApk(this@MainActivity, info) { progress ->
+                    binding.updateButton.text = getString(R.string.update_downloading, progress)
+                }
+                binding.updateButton.setText(R.string.update_button)
+                binding.updateButton.isEnabled = true
+                installApk(apk)
+            } catch (e: Exception) {
+                binding.updateButton.setText(R.string.update_button)
+                binding.updateButton.isEnabled = true
+                binding.updateStatusText.text = getString(
+                    R.string.remote_session_error,
+                    e.message ?: e.javaClass.simpleName,
+                )
+            } finally {
+                updateDownloadInFlight = false
+            }
+        }
+    }
+
+    /** 用 FileProvider 授权 cacheDir 里的 APK 给系统安装器。 */
+    private fun installApk(apk: File) {
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { startActivity(intent) }
+            .onFailure { toast(getString(R.string.settings_unavailable)) }
+    }
+
     override fun onResume() {
         super.onResume()
         if (spaceBlocked) {
@@ -226,6 +343,7 @@ class MainActivity : AppCompatActivity() {
         renderDiagnostics()
         renderSections()
         renderAccessibilityStatus()
+        renderRecentDevices()
         if (SignalingRepository.state.value.phase == ConnectionPhase.ONLINE) {
             SignalingRepository.refreshDevices()
         }
@@ -259,11 +377,7 @@ class MainActivity : AppCompatActivity() {
         binding.connectByCodeButton.setOnClickListener {
             connectByPairCode()
         }
-        // 输完两位数字直接回车就能连，不用再去点按钮。
-        binding.pairCodeInput.setOnEditorActionListener { _, _, _ ->
-            connectByPairCode()
-            true
-        }
+        setupPairCodeCells()
 
         binding.saveButton.setOnClickListener {
             saveAndApply()
@@ -313,6 +427,12 @@ class MainActivity : AppCompatActivity() {
         binding.capabilityCheckButton.setOnClickListener {
             showCapabilityReport()
         }
+        binding.updateButton.setOnClickListener {
+            availableUpdate?.let(::downloadAndInstall)
+        }
+        binding.recheckUpdateButton.setOnClickListener {
+            checkForUpdate()
+        }
     }
 
     /**
@@ -329,6 +449,10 @@ class MainActivity : AppCompatActivity() {
         binding.settingsPage.visibility = if (page == PAGE_SETTINGS) View.VISIBLE else View.GONE
 
         when (page) {
+            PAGE_HOME -> {
+                renderRecentDevices()
+            }
+
             PAGE_DEVICES -> {
                 if (SignalingRepository.state.value.phase == ConnectionPhase.ONLINE) {
                     SignalingRepository.refreshDevices()
@@ -340,6 +464,8 @@ class MainActivity : AppCompatActivity() {
             PAGE_SETTINGS -> {
                 renderSections()
                 renderDiagnostics()
+                renderCurrentVersion()
+                checkForUpdate()
             }
         }
     }
@@ -399,7 +525,10 @@ class MainActivity : AppCompatActivity() {
                     SignalingRepository.state.collect(::renderSignalingState)
                 }
                 launch {
-                    SignalingRepository.devices.collect(::renderDevices)
+                    SignalingRepository.devices.collect { devices ->
+                        renderDevices(devices)
+                        renderRecentDevices()
+                    }
                 }
                 launch {
                     SignalingRepository.pairCode.collect { code ->
@@ -426,8 +555,7 @@ class MainActivity : AppCompatActivity() {
                         // 而不是只把错误码塞进诊断行里让人自己找。
                         if (error.code == "CODE_NOT_FOUND" && pendingPairCode != null) {
                             pendingPairCode = null
-                            binding.pairCodeInputLayout.error =
-                                getString(R.string.pair_code_not_found)
+                            showPairCodeError(getString(R.string.pair_code_not_found))
                         }
                         renderDiagnostics()
                     }
@@ -609,6 +737,94 @@ class MainActivity : AppCompatActivity() {
             code ?: getString(R.string.pair_code_pending)
     }
 
+    /** 四个配对码格，列表顺序即码的字符顺序。 */
+    private val pairCodeCells: List<EditText>
+        get() = listOf(
+            binding.pairCodeCell1,
+            binding.pairCodeCell2,
+            binding.pairCodeCell3,
+            binding.pairCodeCell4,
+        )
+
+    /**
+     * 四位码输入链：只收字母数字并自动转大写；填满一格自动跳下一格，
+     * 空格按退格回到上一格——用户不用手动点来点去。
+     */
+    private fun setupPairCodeCells() {
+        val lengthFilter = InputFilter.LengthFilter(1)
+        val upperAlnumFilter = InputFilter { source, start, end, _, _, _ ->
+            val original = source.subSequence(start, end).toString()
+            val filtered = original.filter { it.isLetterOrDigit() }.uppercase(Locale.ROOT)
+            if (filtered == original) null else filtered
+        }
+        pairCodeCells.forEachIndexed { index, cell ->
+            cell.filters = arrayOf(lengthFilter, upperAlnumFilter)
+            cell.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                override fun afterTextChanged(s: Editable?) {
+                    if (!s.isNullOrEmpty() && index < pairCodeCells.lastIndex) {
+                        pairCodeCells[index + 1].requestFocus()
+                    }
+                    clearPairCodeError()
+                }
+            })
+            cell.setOnKeyListener { _, keyCode, event ->
+                if (keyCode == KeyEvent.KEYCODE_DEL &&
+                    event.action == KeyEvent.ACTION_DOWN &&
+                    cell.text.isNullOrEmpty() && index > 0
+                ) {
+                    val previous = pairCodeCells[index - 1]
+                    previous.requestFocus()
+                    previous.setSelection(previous.text?.length ?: 0)
+                    true
+                } else {
+                    false
+                }
+            }
+            if (index == pairCodeCells.lastIndex) {
+                cell.setOnEditorActionListener { _, actionId, event ->
+                    val isEnter = event?.keyCode == KeyEvent.KEYCODE_ENTER &&
+                        event.action == KeyEvent.ACTION_DOWN
+                    if (actionId == EditorInfo.IME_ACTION_DONE || isEnter) {
+                        connectByPairCode()
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
+    }
+
+    private fun readPairCode(): String =
+        pairCodeCells.joinToString("") { it.text?.toString()?.trim().orEmpty() }
+
+    /** 扫码回填或清空：统一大写，逐格填入。 */
+    private fun fillPairCode(code: String) {
+        val normalized = code.trim().uppercase(Locale.ROOT)
+        pairCodeCells.forEachIndexed { index, cell ->
+            cell.setText(normalized.getOrNull(index)?.toString().orEmpty())
+        }
+        clearPairCodeError()
+    }
+
+    /** 错误用页面内常驻文字 + 格子的错误描边，不用一闪而过的 Toast。 */
+    private fun showPairCodeError(message: String) {
+        binding.pairCodeErrorText.text = message
+        binding.pairCodeErrorText.visibility = View.VISIBLE
+        val errorBackground = ContextCompat.getDrawable(this, R.drawable.bg_code_cell_error)
+        pairCodeCells.forEach { it.background = errorBackground }
+    }
+
+    private fun clearPairCodeError() {
+        if (binding.pairCodeErrorText.visibility != View.VISIBLE) return
+        binding.pairCodeErrorText.text = null
+        binding.pairCodeErrorText.visibility = View.GONE
+        val normalBackground = ContextCompat.getDrawable(this, R.drawable.bg_code_cell)
+        pairCodeCells.forEach { it.background = normalBackground }
+    }
+
     /**
      * 按配对码连接。
      *
@@ -616,12 +832,12 @@ class MainActivity : AppCompatActivity() {
      * 而不是本地比对设备列表：码的归属只有服务端知道，列表可能还没刷新。
      */
     private fun connectByPairCode() {
-        val code = binding.pairCodeInput.text?.toString()?.trim().orEmpty()
-        if (code.length != 2 || !code.all { it.isDigit() }) {
-            binding.pairCodeInputLayout.error = getString(R.string.pair_code_invalid)
+        val code = readPairCode()
+        if (code.length != pairCodeCells.size || !code.all { it.isLetterOrDigit() }) {
+            showPairCodeError(getString(R.string.pair_code_invalid))
             return
         }
-        binding.pairCodeInputLayout.error = null
+        clearPairCodeError()
 
         if (SignalingRepository.state.value.phase != ConnectionPhase.ONLINE) {
             toast(getString(R.string.signaling_not_connected))
@@ -654,12 +870,8 @@ class MainActivity : AppCompatActivity() {
             toast(getString(R.string.pair_code_self))
             return
         }
-        binding.pairCodeInput.setText("")
-        startActivity(
-            Intent(this, RemoteSessionActivity::class.java)
-                .putExtra(RemoteSessionActivity.EXTRA_TARGET_DEVICE_ID, resolution.deviceId)
-                .putExtra(RemoteSessionActivity.EXTRA_TARGET_DEVICE_NAME, resolution.deviceName),
-        )
+        fillPairCode("")
+        connectToDevice(resolution.deviceId, resolution.deviceName, resolution.code)
     }
 
     private fun renderAccessibilityStatus() {
@@ -670,7 +882,7 @@ class MainActivity : AppCompatActivity() {
         binding.accessibilityStatusText.setTextColor(
             ContextCompat.getColor(
                 this,
-                if (enabled) R.color.brand_primary else R.color.brand_primary_dark,
+                if (enabled) R.color.sem_online else R.color.sem_offline,
             ),
         )
     }
@@ -692,6 +904,22 @@ class MainActivity : AppCompatActivity() {
         // 于是重连成功后仍停在「WS 重连中」，把正常状态显示成故障。
         renderDiagnostics()
         renderSections()
+    }
+
+    /**
+     * SIGNAL DECK 设备按钮：surfaceVariant 底 + 1dp outlineVariant 描边 + 12dp 圆角。
+     * 用 backgroundTintList 而不是 setBackgroundColor，保留 MaterialButton 的按压涟漪。
+     */
+    private fun styleDeviceButton(button: MaterialButton, minHeightRes: Int) {
+        button.isAllCaps = false
+        button.cornerRadius = resources.getDimensionPixelSize(R.dimen.radius_md)
+        button.strokeWidth = resources.getDimensionPixelSize(R.dimen.stroke_hairline)
+        button.strokeColor =
+            ColorStateList.valueOf(ContextCompat.getColor(this, R.color.md_outline_variant))
+        button.backgroundTintList =
+            ColorStateList.valueOf(ContextCompat.getColor(this, R.color.md_surface_variant))
+        button.setTextColor(ContextCompat.getColor(this, R.color.md_on_surface))
+        button.minimumHeight = resources.getDimensionPixelSize(minHeightRes)
     }
 
     private fun renderDevices(devices: List<DeviceInfo>) {
@@ -716,28 +944,94 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     getString(R.string.connect_device_with_presence, device.deviceName, presence)
                 }
-                isAllCaps = false
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT,
                 ).apply {
-                    topMargin = (8 * resources.displayMetrics.density).toInt()
+                    topMargin = resources.getDimensionPixelSize(R.dimen.space_sm)
                 }
                 setOnClickListener {
-                    startActivity(
-                        Intent(this@MainActivity, RemoteSessionActivity::class.java)
-                            .putExtra(
-                                RemoteSessionActivity.EXTRA_TARGET_DEVICE_ID,
-                                device.deviceId,
-                            )
-                            .putExtra(
-                                RemoteSessionActivity.EXTRA_TARGET_DEVICE_NAME,
-                                device.deviceName,
-                            ),
-                    )
+                    connectToDevice(device.deviceId, device.deviceName, device.pairCode)
                 }
             }
+            styleDeviceButton(button, R.dimen.touch_min)
             binding.deviceListContainer.addView(button)
+        }
+    }
+
+    /** 统一的会话入口：无论从配对码、在线列表还是最近连接卡片进来，都记一笔历史。 */
+    private fun connectToDevice(deviceId: String, deviceName: String, pairCode: String?) {
+        preferences.saveConnectedDevice(deviceId, deviceName, pairCode)
+        startActivity(
+            Intent(this, RemoteSessionActivity::class.java)
+                .putExtra(RemoteSessionActivity.EXTRA_TARGET_DEVICE_ID, deviceId)
+                .putExtra(RemoteSessionActivity.EXTRA_TARGET_DEVICE_NAME, deviceName),
+        )
+    }
+
+    /**
+     * 首页「最近连接」卡片。
+     *
+     * 数据源是本地历史 [ConnectedDevice]，在线状态则用 [latestDevices] 按 deviceId 叠加：
+     * 历史回答「连过谁」，设备列表回答「现在在不在线」，两者职责分开。
+     * 离线设备也照常展示并可点击——它一上线卡片会自动变成在线，不用重新输码。
+     */
+    private fun renderRecentDevices() {
+        val history = preferences.loadConnectedDevices()
+        binding.emptyRecentText.visibility =
+            if (history.isEmpty()) TextView.VISIBLE else TextView.GONE
+        binding.recentDeviceListContainer.removeAllViews()
+
+        // 一行两列：每两个设备打包成一个横向行，按钮 width=0 + weight=1 保证等宽。
+        // 用嵌套 LinearLayout 而非 RecyclerView/GridLayout，改动小且不需要新 import；
+        // 历史最多 10 条，静态 addView 的开销可以忽略。
+        val gapPx = resources.getDimensionPixelSize(R.dimen.space_sm)
+        // fontScale > 1.3 时由一行两列降为一行一列：布局降级，不是把 11sp 压到 10sp 以下。
+        val columns = if (resources.configuration.fontScale > 1.3f) 1 else 2
+        for (start in history.indices step columns) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).apply { topMargin = gapPx }
+            }
+            // 本行不满列数时，唯一的按钮占满整行，避免右侧留半块空白。
+            val isLastAlone = start + columns >= history.size
+            for (offset in 0 until columns) {
+                val index = start + offset
+                if (index >= history.size) break
+                val item = history[index]
+                val live = latestDevices.firstOrNull { it.deviceId == item.deviceId }
+                val code = live?.pairCode ?: item.pairCode
+                val presence =
+                    if (live != null) presenceLabel(live) else getString(R.string.presence_lost)
+                val label = if (code != null) {
+                    getString(R.string.recent_device_card, item.deviceName, code, presence)
+                } else {
+                    getString(R.string.recent_device_card_no_code, item.deviceName, presence)
+                }
+                val button = MaterialButton(this).apply {
+                    text = label
+                    // 半宽列里长设备名容易挤爆，缩小字号并允许换行；
+                    // 状态靠 ● / ○ / ⊘ 形状 + 文字双重编码，不靠字号承担可读性。
+                    textSize = 12f
+                    layoutParams = LinearLayout.LayoutParams(
+                        0,
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        1f,
+                    ).apply {
+                        // 只有成对时第二列才需要左边距；落单时整行只有一个按钮，不加边距。
+                        if (!isLastAlone && offset == 1) marginStart = gapPx
+                    }
+                    setOnClickListener {
+                        connectToDevice(item.deviceId, item.deviceName, item.pairCode)
+                    }
+                }
+                styleDeviceButton(button, R.dimen.device_card_min_height)
+                row.addView(button)
+            }
+            binding.recentDeviceListContainer.addView(row)
         }
     }
 
@@ -773,7 +1067,7 @@ class MainActivity : AppCompatActivity() {
         val config = persistForm() ?: return
 
         // 二维码只用于「快速导入服务器配置」，不再承担角色声明——
-        // 真正决定连哪台设备的是两位配对码，扫码方连上后自己输即可。
+        // 真正决定连哪台设备的是四位配对码，扫码方连上后自己输即可。
         val payload = JSONObject()
             .put("version", 1)
             .put("server", config.serverUrl.toString().trimEnd('/'))
@@ -836,9 +1130,10 @@ class MainActivity : AppCompatActivity() {
         renderSections()
 
         // 码在二维码里就顺手填进输入框，用户点一下「连接」即可。
-        val pairCode = payload.optString("pairCode").takeIf { it.length == 2 }
+        val pairCode = payload.optString("pairCode").trim().uppercase(Locale.ROOT)
+            .takeIf { it.length == 4 && it.all { c -> c.isLetterOrDigit() } }
         if (pairCode != null) {
-            binding.pairCodeInput.setText(pairCode)
+            fillPairCode(pairCode)
             // 输入框在首页，扫完码还停在「设备」页的话用户看不到已填入，
             // 会以为没扫上。这里直接把导航切回首页。
             binding.bottomNav.selectedItemId = R.id.nav_home

@@ -7,7 +7,7 @@ data class DeviceInfo(
     val deviceId: String,
     val role: DeviceRole,
     val deviceName: String,
-    /** 两位配对码，用户输入它来发起连接。旧服务端不下发时为 null。 */
+    /** 四位配对码，用户输入它来发起连接。旧服务端不下发时为 null。 */
     val pairCode: String? = null,
     /**
      * 服务端最后一次收到该设备存活证据的时间（ISO-8601）。

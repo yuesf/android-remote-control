@@ -17,7 +17,7 @@ object SignalingRepository {
     private val _signals = MutableSharedFlow<RemoteSignal>(extraBufferCapacity = 32)
     val signals = _signals.asSharedFlow()
 
-    /** 本机两位配对码；未连上服务端时为 null。 */
+    /** 本机四位配对码；未连上服务端时为 null。 */
     private val _pairCode = MutableStateFlow<String?>(null)
     val pairCode: StateFlow<String?> = _pairCode.asStateFlow()
 
@@ -110,7 +110,7 @@ object SignalingRepository {
 
     fun refreshDevices(): Boolean = client.refreshDevices()
 
-    /** 按两位配对码查设备。命中与否都通过 [codeResolutions] 或 [errors] 回来。 */
+    /** 按四位配对码查设备。命中与否都通过 [codeResolutions] 或 [errors] 回来。 */
     fun resolveCode(code: String): Boolean = client.resolveCode(code)
 
     fun sendControlRequest(targetDeviceId: String): Boolean =

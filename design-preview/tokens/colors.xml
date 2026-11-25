@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  信号台 SIGNAL DECK · 浅色 token
+  放置位置：app/src/main/res/values/colors.xml
+
+  命名约定（与视觉侧落地清单一致）：
+    md_*    基础 Material 色
+    sem_*   语义状态色（在线/离线/连接中/失联/被控），禁止用 colorError 顶替失联
+    sess_*  会话页常量色，永远深色，只在 values/ 定义一次，values-night/ 不重复
+  三套文件同名 token 不同值，禁止用 _light/_dark 后缀做运行时判断。
+  layout / drawable 禁止硬编码 HEX，一律 ?attr/xxx 或 @color/token。
+
+  使用边界：md_secondary* 只用于中强调文字与图标，不得承载任何状态语义；
+  状态一律走 sem_*。占位「–」的 40% 透明度基于 onSurfaceVariant，不是 secondary。
+-->
+<resources>
+    <!-- ========== 基础 Material 色（md_*） ========== -->
+    <color name="md_primary">#0B6B73</color>
+    <color name="md_on_primary">#FFFFFF</color>
+    <color name="md_primary_container">#D6EEF0</color>
+    <color name="md_on_primary_container">#06383D</color>
+    <color name="md_secondary">#47565C</color>
+    <color name="md_on_secondary">#FFFFFF</color>
+    <color name="md_secondary_container">#DFE8EA</color>
+    <color name="md_on_secondary_container">#29383D</color>
+    <color name="md_surface">#FBFCFC</color>
+    <color name="md_background">#F2F5F5</color>
+    <color name="md_on_surface">#162226</color>
+    <color name="md_surface_variant">#E6ECEC</color>
+    <color name="md_on_surface_variant">#526267</color>
+    <color name="md_outline">#B9C5C7</color>
+    <color name="md_outline_variant">#DCE4E5</color>
+    <color name="md_error">#B3261E</color>
+    <color name="md_error_container">#F9DEDC</color>
+
+    <!-- ========== 语义状态色（sem_*，浅色） ========== -->
+    <color name="sem_online">#0B7A5B</color>
+    <color name="sem_online_bg">#DDF2E9</color>
+    <color name="sem_connecting">#0B6B73</color>
+    <color name="sem_connecting_bg">#D6EEF0</color>
+    <color name="sem_connecting_on">#06383D</color>
+    <color name="sem_offline">#66757B</color>
+    <color name="sem_offline_bg">#E6ECEC</color>
+    <color name="sem_lost">#B3261E</color>
+    <color name="sem_lost_bg">#F9DEDC</color>
+    <color name="sem_controlled">#A8340C</color>
+    <color name="sem_controlled_bg">#FBE3D5</color>
+    <!-- 被控常驻条文字色：底 #FBE3D5 / 字 #7A2305 / 点 sem_controlled #A8340C -->
+    <color name="sem_controlled_bar_on">#7A2305</color>
+
+    <!-- ========== 会话页常量（sess_*，永远深色，values-night 不重复定义） ========== -->
+    <color name="sess_viewport">#0A0E10</color>
+    <color name="sess_controlbar">#11181B</color>
+    <color name="sess_badge_bg">#C2410C</color>
+    <color name="sess_badge_on">#FFFFFF</color>
+    <color name="sess_badge_off_bg">#232E31</color>
+    <color name="sess_badge_off_on">#A3B3B8</color>
+</resources>

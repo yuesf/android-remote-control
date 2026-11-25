@@ -31,3 +31,19 @@ test("rejects signal messages without a valid target id", () => {
     ),
   );
 });
+
+test("accepts four-character alphanumeric pairing codes and rejects legacy or ambiguous ones", () => {
+  const resolved = parseClientMessage(
+    JSON.stringify({ type: "resolve_code", code: "K7M2" }),
+    4096,
+  );
+  assert.equal(resolved.type, "resolve_code");
+  assert.equal(resolved.code, "K7M2");
+
+  // 旧两位码、含易混字符的码、小写码都必须被拒绝——生成端只发大写。
+  for (const code of ["37", "0000", "K7M0", "K7MI", "k7m2", "K7M"]) {
+    assert.throws(() =>
+      parseClientMessage(JSON.stringify({ type: "resolve_code", code }), 4096),
+    );
+  }
+});

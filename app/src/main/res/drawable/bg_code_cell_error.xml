@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 配对码错误态：errorContainer 底 + 2dp error 描边（视觉稿规范） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/md_error_container" />
+    <stroke android:width="2dp" android:color="@color/md_error" />
+    <corners android:radius="12dp" />
+</shape>
