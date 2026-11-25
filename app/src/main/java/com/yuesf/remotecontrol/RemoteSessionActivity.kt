@@ -62,8 +62,9 @@ class RemoteSessionActivity : AppCompatActivity() {
     private var controlsVisible = true
 
     /**
-     * 用户手动切过的屏幕方向。App 默认跟随系统（自动旋转通常关着，恒为竖屏），
-     * 这里记住按钮选的方向，旋转配置变化时用它恢复，避免转屏后又被拉回竖屏。
+     * 用户手动锁定的屏幕方向。null = 跟随系统（手机开了自动旋转就跟着转）。
+     * 点「横屏」强制横屏，再点「自动」解除锁定交还给系统——否则 requestedOrientation
+     * 一旦设置过就永久生效，系统自动旋转对会话页失效（用户实测踩过的坑）。
      */
     private var manualOrientation: Int? = null
 
@@ -190,42 +191,41 @@ class RemoteSessionActivity : AppCompatActivity() {
     }
 
     /**
-     * 手动切换横竖屏。清单里声明了 configChanges（orientation|screenSize），
-     * 旋转不会重建 Activity，WebRTC 会话和已建立的画面不会断——只重新布局。
+     * 两态切换：跟随系统 ↔ 强制横屏。
      *
-     * 用 SENSOR 版而不是固定 SCREEN_ORIENTATION_LANDSCAPE：横屏时允许 90°/270°
-     * 两个方向，用户倒着拿手机也能正确看到画面；竖屏同理。
+     * 跟随系统用 UNSPECIFIED 显式交还控制权（等效于 Manifest 未声明方向），
+     * 系统开了自动旋转就跟随，关着就停在竖屏。锁定用 SENSOR 版，允许 90°/270°
+     * 两个横屏方向，倒着拿手机也能正确看到画面。
+     *
+     * 清单里声明了 configChanges（orientation|screenSize），旋转不会重建 Activity，
+     * WebRTC 会话和已建立的画面不会断——只重新布局。
      */
     private fun toggleOrientation() {
-        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val target = if (landscape) {
-            ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-        } else {
+        val next = if (manualOrientation == null) {
             ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            null
         }
-        manualOrientation = target
-        requestedOrientation = target
-        Log.i(TAG, "toggleOrientation: from=${if (landscape) "landscape" else "portrait"} target=$target")
-        // 旋转后按钮文字要跟着变：当前是横屏时按钮显示「竖屏」（下一步动作）。
+        manualOrientation = next
+        requestedOrientation = next ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        Log.i(TAG, "toggleOrientation: manual=${next ?: "system"}")
         updateRotateButtonLabel()
     }
 
+    /** 按钮文字显示下一步动作：跟随系统时显示「横屏」，锁定横屏时显示「自动」。 */
     private fun updateRotateButtonLabel() {
-        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         binding.rotateScreenButton.setText(
-            if (landscape) R.string.switch_to_portrait else R.string.switch_to_landscape,
+            if (manualOrientation == null) R.string.switch_to_landscape else R.string.switch_to_auto,
         )
     }
 
     /**
      * 转屏回调。configChanges 接管后系统不会重建 Activity，也不会自动重置沉浸式，
      * 所以这里要主动重新压一次系统栏——否则横屏后状态栏/手势条会重新露出来盖住画面。
-     * 按钮文字也在这里同步（覆盖系统侧旋转、折叠屏展开等非按钮触发的方向变化）。
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         enterImmersive()
-        updateRotateButtonLabel()
     }
 
     /** 布局探针：确认视频视图铺满整块物理屏（debug 排查用，最多记 3 次）。 */
