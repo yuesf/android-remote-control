@@ -44,7 +44,7 @@ PUBLIC_IP=<服务器公网IP> bash deploy/deploy.sh
 ./gradlew -Dorg.gradle.java.home=<JDK21路径> :app:assembleDebug
 ```
 
-产物在 `app/build/outputs/apk/debug/app-debug.apk`，安装到两台手机。
+产物在 `app/build/outputs/apk/debug/remote-control.apk`，安装到两台手机。
 服务器地址和令牌可在 App 的「设置」页填写（也支持编译时预置）。
 
 ### 3. 配对连接

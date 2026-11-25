@@ -53,6 +53,15 @@ android {
         viewBinding = true
         buildConfig = true
     }
+
+    // APK 统一命名 remote-control.apk（用户约定）：本地构建产物和 GitHub Release
+    // 的 asset 都用这个名字，应用内更新检查按它找下载地址。
+    applicationVariants.all {
+        outputs.all {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
+                "remote-control.apk"
+        }
+    }
 }
 
 dependencies {

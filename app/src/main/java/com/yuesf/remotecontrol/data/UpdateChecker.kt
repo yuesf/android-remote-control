@@ -29,7 +29,7 @@ object UpdateChecker {
     private const val TAG = "UpdateChecker"
     private const val RELEASES_URL =
         "https://api.github.com/repos/yuesf/android-remote-control/releases/latest"
-    private const val APK_ASSET_NAME = "app-debug.apk"
+    private const val APK_ASSET_NAME = "remote-control.apk"
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
