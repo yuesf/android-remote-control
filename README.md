@@ -45,7 +45,9 @@ PUBLIC_IP=<服务器公网IP> bash deploy/deploy.sh
 ```
 
 产物在 `app/build/outputs/apk/debug/remote-control.apk`，安装到两台手机。
-服务器地址和令牌可在 App 的「设置」页填写（也支持编译时预置）。
+服务器地址和令牌可在 App 的「设置」页填写。也支持编译期预置：在仓库根目录建
+`preset.properties`（已被 `.gitignore` 忽略，不会上传），写入 `serverUrl=...` 和
+`authToken=...` 即可，文件缺失时预置值为空。密钥类信息一律不进仓库。
 
 ### 3. 配对连接
 

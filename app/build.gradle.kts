@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -14,20 +16,23 @@ android {
         versionCode = 63
         versionName = "1.0.0"
 
-        // 预置信令服务器地址与令牌，省去在两台手机上手工输入 48 位串。
-        // 设备角色仍然不预置，由界面选择。
+        // 编译期预置信令服务器地址与令牌，省去手工输入 48 位串。
+        // 值从仓库根目录 preset.properties 读取——该文件已被 .gitignore 忽略，
+        // 密钥类信息一律不进仓库。文件缺失时预置值为空串，App 在设置页手动填写。
         //
-        // PRESET_VERSION 是这份预置配置的版本号。每次改动上面两个值都必须递增，
+        // PRESET_VERSION 是这份预置配置的版本号。每次改动预置值都必须递增，
         // 否则已经装过旧版本的手机仍会沿用 SharedPreferences 里的旧地址与旧令牌
-        // （表现为“保存了却连不上/401”，因为预置值只在全新安装时生效）。
-        // 递增后，升级首启会按新版本号同步一次，之后用户手改的配置不再被覆盖。
+        // （预置值只在全新安装/版本升级时同步一次，用户手改的配置不再被覆盖）。
+        val presetProps = Properties()
+        val presetFile = rootProject.file("preset.properties")
+        if (presetFile.exists()) {
+            presetFile.inputStream().use { presetProps.load(it) }
+        }
+        val presetServerUrl = presetProps.getProperty("serverUrl", "").trim()
+        val presetAuthToken = presetProps.getProperty("authToken", "").trim()
         buildConfigField("int", "PRESET_VERSION", "2")
-        buildConfigField("String", "DEFAULT_SERVER_URL", "\"http://8.152.3.131:8787\"")
-        buildConfigField(
-            "String",
-            "DEFAULT_AUTH_TOKEN",
-            "\"cf2b74ded957c9a0ff5cf7534b9bc5920b983f090aa8e828\"",
-        )
+        buildConfigField("String", "DEFAULT_SERVER_URL", "\"$presetServerUrl\"")
+        buildConfigField("String", "DEFAULT_AUTH_TOKEN", "\"$presetAuthToken\"")
     }
 
     buildTypes {
@@ -61,6 +66,15 @@ android {
             (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
                 "remote-control.apk"
         }
+    }
+}
+
+// 让 preset.properties 成为 BuildConfig 生成任务的输入：改预置文件后
+// 正常构建（不带 --rerun-tasks）也会重新生成 BuildConfig，不会 up-to-date 跳过。
+val presetInputFile = rootProject.file("preset.properties")
+if (presetInputFile.exists()) {
+    tasks.matching { it.name.endsWith("BuildConfig") }.configureEach {
+        inputs.file(presetInputFile)
     }
 }
 
