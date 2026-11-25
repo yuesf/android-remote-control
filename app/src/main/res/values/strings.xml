@@ -115,7 +115,6 @@
     <string name="close_session">关闭</string>
     <string name="switch_to_landscape">横屏</string>
     <string name="switch_to_portrait">竖屏</string>
-    <string name="switch_to_auto">自动</string>
     <string name="control_back">返回</string>
     <string name="control_home">主页</string>
     <string name="control_recents">多任务</string>

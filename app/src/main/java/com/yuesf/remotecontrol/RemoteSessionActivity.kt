@@ -61,13 +61,6 @@ class RemoteSessionActivity : AppCompatActivity() {
     /** 控制栏当前是否展开。连通后自动收起，只留一个把手。 */
     private var controlsVisible = true
 
-    /**
-     * 用户手动锁定的屏幕方向。null = 跟随系统（手机开了自动旋转就跟着转）。
-     * 点「横屏」强制横屏，再点「自动」解除锁定交还给系统——否则 requestedOrientation
-     * 一旦设置过就永久生效，系统自动旋转对会话页失效（用户实测踩过的坑）。
-     */
-    private var manualOrientation: Int? = null
-
     /** 连通后延时收起控制栏：画面本身就够看了，工具栏一直压着反而碍事。 */
     private val autoHideControls = Runnable { setControlsVisible(false) }
 
@@ -101,6 +94,9 @@ class RemoteSessionActivity : AppCompatActivity() {
         setContentView(binding.root)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enterImmersive()
+        // 会话页默认锁死竖屏：不看系统「自动旋转」开关（用户要求——远控画面
+        // 跟着手机乱转会晕，横屏只允许从控制栏按钮进入）。
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
         targetDeviceId = intent.getStringExtra(EXTRA_TARGET_DEVICE_ID).orEmpty()
         val targetName = intent.getStringExtra(EXTRA_TARGET_DEVICE_NAME).orEmpty()
@@ -191,41 +187,44 @@ class RemoteSessionActivity : AppCompatActivity() {
     }
 
     /**
-     * 两态切换：跟随系统 ↔ 强制横屏。
+     * 手动切换横竖屏。会话页入口已锁竖屏，这里只做「竖屏 ↔ 横屏」的按钮切换，
+     * 系统自动旋转开关对会话页无效。
      *
-     * 跟随系统用 UNSPECIFIED 显式交还控制权（等效于 Manifest 未声明方向），
-     * 系统开了自动旋转就跟随，关着就停在竖屏。锁定用 SENSOR 版，允许 90°/270°
-     * 两个横屏方向，倒着拿手机也能正确看到画面。
+     * 横屏用 SENSOR 版，允许 90°/270° 两个方向，倒着拿手机也能正确看到画面；
+     * 竖屏用固定 PORTRAIT，锁死 0°，不跟随传感器。
      *
      * 清单里声明了 configChanges（orientation|screenSize），旋转不会重建 Activity，
      * WebRTC 会话和已建立的画面不会断——只重新布局。
      */
     private fun toggleOrientation() {
-        val next = if (manualOrientation == null) {
-            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val target = if (landscape) {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         } else {
-            null
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         }
-        manualOrientation = next
-        requestedOrientation = next ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        Log.i(TAG, "toggleOrientation: manual=${next ?: "system"}")
+        requestedOrientation = target
+        Log.i(TAG, "toggleOrientation: target=$target")
         updateRotateButtonLabel()
     }
 
-    /** 按钮文字显示下一步动作：跟随系统时显示「横屏」，锁定横屏时显示「自动」。 */
+    /** 按钮文字显示下一步动作：竖屏时显示「横屏」，横屏时显示「竖屏」。 */
     private fun updateRotateButtonLabel() {
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         binding.rotateScreenButton.setText(
-            if (manualOrientation == null) R.string.switch_to_landscape else R.string.switch_to_auto,
+            if (landscape) R.string.switch_to_portrait else R.string.switch_to_landscape,
         )
     }
 
     /**
      * 转屏回调。configChanges 接管后系统不会重建 Activity，也不会自动重置沉浸式，
      * 所以这里要主动重新压一次系统栏——否则横屏后状态栏/手势条会重新露出来盖住画面。
+     * 按钮文字跟当前方向走（横屏显示「竖屏」，竖屏显示「横屏」）。
      */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         enterImmersive()
+        updateRotateButtonLabel()
     }
 
     /** 布局探针：确认视频视图铺满整块物理屏（debug 排查用，最多记 3 次）。 */
