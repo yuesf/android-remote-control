@@ -65,6 +65,13 @@ class SignalingClient(private val listener: Listener) {
     @Volatile
     private var online = false
 
+    /**
+     * 屏幕采集开关状态，被控服务在状态变化时写入；
+     * register 和 ping 都会带上它，服务端转给控制端。
+     */
+    @Volatile
+    var captureReady: Boolean = false
+
     private var socket: WebSocket? = null
     private var reconnectAttempt = 0
     private var reconnectScheduled = false
@@ -196,7 +203,8 @@ class SignalingClient(private val listener: Listener) {
         val ok = sendJson(
             JSONObject()
                 .put("type", "ping")
-                .put("nonce", SystemClock.elapsedRealtime().toString()),
+                .put("nonce", SystemClock.elapsedRealtime().toString())
+                .put("captureReady", captureReady),
         )
         if (!ok) {
             FileLog.append("presence report failed: socket=${socket == null}")
@@ -363,6 +371,7 @@ class SignalingClient(private val listener: Listener) {
                     deviceName = deviceName,
                     pairCode = item.optString("pairCode").takeIf { it.isNotBlank() },
                     lastSeenAt = item.optString("lastSeenAt").takeIf { it.isNotBlank() },
+                    captureReady = if (item.has("captureReady")) item.optBoolean("captureReady") else null,
                 ),
             )
         }
@@ -448,6 +457,7 @@ class SignalingClient(private val listener: Listener) {
                 .put("deviceId", activeConfig.deviceId)
                 .put("role", activeConfig.role.wireValue)
                 .put("deviceName", activeConfig.deviceName)
+                .put("captureReady", captureReady)
             webSocket.send(register.toString())
         }
 

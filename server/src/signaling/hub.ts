@@ -97,6 +97,9 @@ export class SignalingHub {
           sink,
           pairCode,
         );
+        if (message.captureReady !== undefined) {
+          device.captureReady = message.captureReady;
+        }
         registeredDeviceId = message.deviceId;
         registeredSink = sink;
         tracked.deviceId = message.deviceId;
@@ -153,6 +156,8 @@ export class SignalingHub {
       }
 
       if (message.type === "ping") {
+        // ping 里可以带屏幕采集开关状态，更新注册表供控制端查询。
+        this.options.registry.touch(registeredDeviceId, message.captureReady);
         send({ type: "pong", nonce: message.nonce });
         return;
       }

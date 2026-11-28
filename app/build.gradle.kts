@@ -13,7 +13,7 @@ android {
         applicationId = "com.yuesf.remotecontrol"
         minSdk = 29
         targetSdk = 34
-        versionCode = 63
+        versionCode = 64
         versionName = "1.0.0"
 
         // 编译期预置信令服务器地址与令牌，省去手工输入 48 位串。

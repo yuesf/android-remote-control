@@ -52,14 +52,18 @@ export class DeviceRegistry {
    * 记录一次「设备还活着」的证据：收到它的任何消息，或者 pong 回来了。
    *
    * 只在注册表里记录，不改连接本身——连接死活由 WebSocket 层判断，
-   * 这里只回答「最近有没有动静」。
+   * 这里只回答「最近有没有动静」。captureReady 由被控端随 ping 上报，
+   * 未携带时保留旧值（undefined = 客户端不支持，控制端按未知处理）。
    */
-  touch(deviceId: string): void {
+  touch(deviceId: string, captureReady?: boolean): void {
     const device = this.devices.get(deviceId);
     if (!device) {
       return;
     }
     device.lastSeenAt = new Date().toISOString();
+    if (captureReady !== undefined) {
+      device.captureReady = captureReady;
+    }
   }
 
   unregister(deviceId: string, sink: DeviceSink): boolean {

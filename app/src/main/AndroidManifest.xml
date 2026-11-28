@@ -66,14 +66,6 @@
             android:exported="false"
             android:theme="@style/Theme.RemoteControl.Transparent" />
 
-        <activity
-            android:name=".SessionWakeActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:showWhenLocked="true"
-            android:theme="@style/Theme.RemoteControl.Transparent"
-            android:turnScreenOn="true" />
-
         <!-- 更新：把 cacheDir 里的 APK 以 content:// 授权给系统安装器（Android 7+ 必需） -->
         <provider
             android:name="androidx.core.content.FileProvider"
@@ -85,6 +77,18 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- 轻量信令保活服务：常驻在线收控制请求，不碰采集。 -->
+        <service
+            android:name=".agent.SignalingKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keep the device reachable on the signaling server to receive control requests" />
+        </service>
+
+        <!-- 被控会话服务：只在被控期间被信令服务拉起，会话结束立即停止。 -->
         <service
             android:name=".agent.RemoteAgentService"
             android:exported="false"
@@ -92,7 +96,7 @@
             android:stopWithTask="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Persistent remote support signaling for a user-paired device" />
+                android:value="Remote support session: screen capture and control while being controlled" />
         </service>
 
         <receiver

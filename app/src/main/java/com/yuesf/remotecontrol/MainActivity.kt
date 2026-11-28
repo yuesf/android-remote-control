@@ -41,6 +41,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 import com.yuesf.remotecontrol.accessibility.CaptureAutoApprove
 import com.yuesf.remotecontrol.accessibility.RemoteAccessibilityService
 import com.yuesf.remotecontrol.agent.RemoteAgentService
+import com.yuesf.remotecontrol.agent.SignalingKeepAliveService
 import com.yuesf.remotecontrol.data.AppPreferences
 import com.yuesf.remotecontrol.data.ConnectedDevice
 import com.yuesf.remotecontrol.debug.FileLog
@@ -165,19 +166,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 打开 App 就恢复连接并拉起被控服务。
+     * 打开 App 就恢复信令连接（在线待控）。
      *
-     * 改造后不再区分角色：每台设备都必须常驻「可被控」能力（信令 + 采集 + 无障碍），
-     * 否则对方输你的配对码也连不上；同时控制别人的能力在需要时才动用。
-     * 以前按角色二选一，导致控制端机器上根本没有被控服务，反过来连它就连不上。
+     * 信令连接与被控服务是两回事：这里只拉起轻量信令保活服务（收控制请求 +
+     * 保活三件套），被控服务由信令服务在收到 control-request 时按需拉起。
      */
     private fun autoStartIfConfigured() {
         val config = preferences.loadConfig() ?: return
         requestNotificationPermissionIfNeeded()
         ensureBatteryOptimizationIgnored()
         ensureOverlayPermission()
-        if (!RemoteAgentService.isRunning) {
-            runCatching { RemoteAgentService.start(this) }
+        if (!SignalingKeepAliveService.isRunning) {
+            runCatching { SignalingKeepAliveService.start(this) }
                 .onFailure { error ->
                     toast(
                         getString(
@@ -190,7 +190,9 @@ class MainActivity : AppCompatActivity() {
         if (SignalingRepository.state.value.phase != ConnectionPhase.ONLINE) {
             SignalingRepository.connect(config)
         }
-        binding.connectionStatusText.setText(R.string.status_connecting)
+        // 顶栏状态完全由 observeSignaling 的状态流驱动，不要手动 setText：
+        // 状态早就是 ONLINE 时手动写「连接中」，StateFlow 值不变不会重新发射，
+        // 顶栏就永远停在「连接中」，而链路其实是通的。
     }
 
     /**
@@ -380,16 +382,12 @@ class MainActivity : AppCompatActivity() {
         setupPairCodeCells()
 
         binding.saveButton.setOnClickListener {
-            saveAndApply()
-        }
-        binding.startAgentButton.setOnClickListener {
-            saveAndApply()
-        }
-        binding.stopAgentButton.setOnClickListener {
-            RemoteAgentService.stop(this)
-            SignalingRepository.disconnect()
-            binding.connectionStatusText.text = getString(R.string.status_disconnected)
-            renderSections()
+            // 全自动：保存配置后直接确保信令服务在跑、连接用的是新配置。
+            // deviceId 不变（换服务器/令牌不会换码）；服务已运行时 onStartCommand
+            // 会用新配置重建连接，保活闹钟后续也按新配置走。没有手动上下线入口。
+            persistForm() ?: return@setOnClickListener
+            toast(getString(R.string.config_saved))
+            startAgentService()
         }
         binding.grantCaptureButton.setOnClickListener {
             val config = persistForm() ?: return@setOnClickListener
@@ -401,6 +399,14 @@ class MainActivity : AppCompatActivity() {
             CaptureAutoApprove.armManual()
             runCatching { capturePermissionLauncher.launch(manager.createScreenCaptureIntent()) }
                 .onFailure { toast(getString(R.string.settings_unavailable)) }
+        }
+        binding.releaseCaptureButton.setOnClickListener {
+            if (RemoteAgentService.releaseCapture()) {
+                toast(getString(R.string.capture_released))
+            } else {
+                toast(getString(R.string.capture_release_unavailable))
+            }
+            renderSections()
         }
         binding.showPairingQrButton.setOnClickListener {
             showPairingQr()
@@ -572,7 +578,8 @@ class MainActivity : AppCompatActivity() {
             ConnectionPhase.ERROR -> "错误"
             else -> "未连接"
         }
-        val service = if (RemoteAgentService.isRunning) "运行中" else "未启动"
+        val service = if (SignalingKeepAliveService.isRunning) "信令运行中" else "未启动"
+        val agentSvc = if (RemoteAgentService.isRunning) "被控中" else "空闲"
         val capture = if (RemoteAgentService.isCaptureAuthorized) "就绪" else "未授权"
         val battery = getSystemService(PowerManager::class.java)
             ?.isIgnoringBatteryOptimizations(packageName)
@@ -586,7 +593,7 @@ class MainActivity : AppCompatActivity() {
             powerManager.isDeviceIdleMode -> "深度"
             else -> "否"
         }
-        val alarm = if (RemoteAgentService.lastAlarmExact) "精确" else "降级"
+        val alarm = if (SignalingKeepAliveService.lastAlarmExact) "精确" else "降级"
         // 不再有角色分支：每台设备都常驻被控能力，这些指标全部相关。
         // 以前只在被控端显示，结果控制端机器上「采集未授权」这种真问题被藏了起来。
         binding.diagnosticsText.text = buildString {
@@ -597,11 +604,12 @@ class MainActivity : AppCompatActivity() {
             append(" 条（").append(RemoteAgentService.lastSignalKind).append("）")
             append(" / ack=").append(RemoteAgentService.lastAckResult?.toString() ?: "无")
             append(" / 服务 ").append(service)
+            append("（").append(agentSvc).append("）")
             append(" / 采集 ").append(capture)
             append("（").append(RemoteAgentService.captureProfileLabel()).append("）")
             append(" / 电池 ").append(battery)
             append(" / Doze ").append(doze)
-            append(" / Wi-Fi锁 ").append(RemoteAgentService.wifiLockLabel())
+            append(" / Wi-Fi锁 ").append(SignalingKeepAliveService.wifiLockLabel())
             append(" / 闹钟 ").append(alarm)
             append(" / 悬浮窗 ").append(overlay)
             append(" / 错误 ").append(lastErrorDesc)
@@ -609,12 +617,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun timeLabel(): String = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-
-    private fun saveAndApply() {
-        persistForm() ?: return
-        requestNotificationPermissionIfNeeded()
-        startAgentService()
-    }
 
     private fun persistForm() = run {
         binding.serverUrlLayout.error = null
@@ -654,8 +656,9 @@ class MainActivity : AppCompatActivity() {
             toast(getString(R.string.agent_config_required))
             return
         }
+        requestNotificationPermissionIfNeeded()
 
-        runCatching { RemoteAgentService.start(this) }
+        runCatching { SignalingKeepAliveService.start(this) }
             .onFailure { error ->
                 toast(
                     getString(
@@ -666,7 +669,6 @@ class MainActivity : AppCompatActivity() {
             }
         ensureBatteryOptimizationIgnored()
         ensureOverlayPermission()
-        binding.connectionStatusText.setText(R.string.status_connecting)
         renderSections()
     }
 
@@ -717,10 +719,6 @@ class MainActivity : AppCompatActivity() {
     private fun renderSections() {
         binding.agentSection.visibility = LinearLayout.VISIBLE
         binding.controllerSection.visibility = LinearLayout.VISIBLE
-        binding.startAgentButton.visibility =
-            if (!RemoteAgentService.isRunning) LinearLayout.VISIBLE else LinearLayout.GONE
-        binding.stopAgentButton.visibility =
-            if (RemoteAgentService.isRunning) LinearLayout.VISIBLE else LinearLayout.GONE
         binding.captureStatusText.setText(
             if (RemoteAgentService.isCaptureAuthorized) {
                 R.string.capture_available
@@ -728,6 +726,13 @@ class MainActivity : AppCompatActivity() {
                 R.string.capture_unavailable
             },
         )
+        // 只有服务在跑且采集真的就绪时才有东西可释放。
+        binding.releaseCaptureButton.visibility =
+            if (RemoteAgentService.isRunning && RemoteAgentService.isCaptureAuthorized) {
+                LinearLayout.VISIBLE
+            } else {
+                LinearLayout.GONE
+            }
         renderPairCode(SignalingRepository.pairCode.value)
         renderAccessibilityStatus()
     }
@@ -933,16 +938,19 @@ class MainActivity : AppCompatActivity() {
 
         for (device in others) {
             val presence = presenceLabel(device)
+            // 采集状态由 B 随心跳上报；空闲时是关闭的，连接时 B 会自动拉起授权。
+            val captureSuffix =
+                if (device.captureReady == false) getString(R.string.capture_off_suffix) else ""
             val button = MaterialButton(this).apply {
                 text = if (device.pairCode != null) {
                     getString(
                         R.string.connect_device_with_code,
                         device.pairCode,
                         device.deviceName,
-                        presence,
+                        presence + captureSuffix,
                     )
                 } else {
-                    getString(R.string.connect_device_with_presence, device.deviceName, presence)
+                    getString(R.string.connect_device_with_presence, device.deviceName, presence + captureSuffix)
                 }
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,

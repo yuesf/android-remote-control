@@ -30,9 +30,8 @@
     <string name="pair_code_self">这是本机的配对码</string>
     <string name="pairing_qr_prompt_with_code">扫到对方手机上即可导入服务器配置。本机配对码是 %1$s，对方连上后输入它就能控制本机。</string>
     <string name="pairing_success_with_code">已导入配置，配对码 %1$s 已填入，点「连接」即可</string>
-    <string name="save_and_connect">保存配置并连接</string>
-    <string name="start_agent">启动被控服务</string>
-    <string name="stop_agent">停止被控服务</string>
+    <string name="save_config">保存配置</string>
+    <string name="config_saved">配置已保存</string>
     <string name="open_accessibility">打开无障碍设置</string>
     <string name="open_battery_settings">打开电池优化设置</string>
     <string name="refresh_devices">刷新在线设备</string>
@@ -49,6 +48,10 @@
     <string name="accessibility_service_description">用于执行已配对控制端发送的点击、滑动、返回和文字输入操作。仅在你主动启用并配对后生效。</string>
     <string name="notification_channel_name">远程协助服务</string>
     <string name="notification_channel_description">保持被控端与信令服务器的连接</string>
+    <string name="notification_signaling_channel_name">信令在线</string>
+    <string name="notification_signaling_channel_description">保持本机在信令服务器上在线，随时可以收到控制请求</string>
+    <string name="notification_signaling_title">信令在线</string>
+    <string name="notification_signaling_body">等待控制请求，本机空闲不采集</string>
     <string name="notification_title">远程协助已启用</string>
     <string name="notification_body">等待已配对的控制端发起连接</string>
     <string name="notification_title_needs_capture">屏幕采集未授权</string>
@@ -89,6 +92,8 @@
         刚上报过 = 在线；10~30 分钟没动静 = 可能离线；超过 30 分钟 = 失联。
     -->
     <string name="presence_online">● 在线</string>
+    <string name="capture_off_suffix"> · 采集关</string>
+    <string name="capture_off_hint">对方空闲时采集是关闭的，连接时会自动拉起授权，请稍等几秒</string>
     <string name="presence_minutes_ago">○ %1$d 分钟前</string>
     <string name="presence_lost">⊘ 已失联</string>
     <string name="no_online_devices">暂无在线被控端（失联设备不再列出）</string>
@@ -96,6 +101,9 @@
     <string name="capture_available">屏幕采集授权已就绪，等待 A 发起连接</string>
     <string name="capture_unavailable">尚未授权屏幕采集，A 发起连接时无法建立画面</string>
     <string name="capture_permission_denied">未授予屏幕采集权限</string>
+    <string name="release_capture">释放屏幕采集（用银行等敏感 App 前点这个）</string>
+    <string name="capture_released">已释放屏幕采集，「正在共享屏幕」提示会消失；下次被控需重新授权</string>
+    <string name="capture_release_unavailable">被控服务未在运行，当前没有可释放的屏幕采集</string>
     <string name="remote_session_title">控制 %1$s</string>
     <string name="remote_session_connecting">正在建立远程连接…</string>
     <string name="remote_session_waiting_offer">已请求连接，等待 B 返回画面…</string>

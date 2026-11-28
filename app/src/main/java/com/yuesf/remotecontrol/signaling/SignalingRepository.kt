@@ -103,6 +103,11 @@ object SignalingRepository {
      */
     fun reportPresence(): Boolean = client.reportPresence()
 
+    /** 屏幕采集状态变化时由被控服务调用，随 register/ping 上报给服务端。 */
+    fun setCaptureReady(ready: Boolean) {
+        client.captureReady = ready
+    }
+
     /** 上报失败后的强制重建，跳过所有"看起来还正常"的判断。 */
     fun forceReconnect() {
         client.forceReconnect()

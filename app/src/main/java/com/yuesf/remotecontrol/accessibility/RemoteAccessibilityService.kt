@@ -652,8 +652,8 @@ class RemoteAccessibilityService : AccessibilityService() {
 
     // ---------- 被控状态角标 ----------
     //
-    // 被控时机主应当知情：屏幕上有一个不遮挡、不拦截触摸的常驻角标
-    // 「被控制」，会话结束后变成「控制已关闭」并在几秒后消失。
+    // 「被控制」常驻角标已移除：被控期间屏幕上不再有任何提示。
+    // 仅保留会话结束时的「控制已关闭」角标，几秒后自动消失。
     //
     // 用 TYPE_ACCESSIBILITY_OVERLAY：无障碍服务自带这个窗口能力，
     // 不需要 SYSTEM_ALERT_WINDOW（悬浮窗）权限，锁屏界面也能显示。
@@ -1001,14 +1001,9 @@ class RemoteAccessibilityService : AccessibilityService() {
         //
         // 回调来自 WebRTC 线程，必须 post 到主线程再碰窗口。
         // 无障碍没连上时静默放弃：这种状态下会话本来就会被拒绝建立。
-
-        /** 被控会话已建立，显示常驻角标「被控制」。 */
-        fun showControlActive() {
-            val service = instance ?: return
-            service.badgeHandler.post {
-                service.renderBadge(service.getString(R.string.control_badge_active), 0L)
-            }
-        }
+        //
+        // 「被控制」常驻角标已按需求移除（控制中不再有任何屏幕提示），
+        // 只保留会话结束时的「控制已关闭」短暂提示。
 
         /** 会话结束，角标切换为「控制已关闭」，几秒后自动消失。 */
         fun showControlEnded() {

@@ -30,11 +30,13 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         runCatching {
-            val serviceIntent = Intent(context, RemoteAgentService::class.java)
-                .setAction(RemoteAgentService.ACTION_START)
+            // 开机只恢复轻量信令保活服务（在线待控）；被控服务由它收到
+            // control-request 时按需拉起。
+            val serviceIntent = Intent(context, SignalingKeepAliveService::class.java)
+                .setAction(SignalingKeepAliveService.ACTION_START)
             ContextCompat.startForegroundService(context, serviceIntent)
         }.onFailure { error ->
-            Log.e(TAG, "Unable to restart the remote agent after boot", error)
+            Log.e(TAG, "Unable to restart the signaling service after boot", error)
         }
     }
 

@@ -14,6 +14,8 @@ export const registerMessageSchema = z.object({
   deviceId: z.string().uuid(),
   role: deviceRoleSchema.optional(),
   deviceName: z.string().trim().min(1).max(64),
+  /** 注册时的屏幕采集开关状态，可选（旧版客户端不带）。 */
+  captureReady: z.boolean().optional(),
 });
 
 export const resolveCodeMessageSchema = z.object({
@@ -35,6 +37,11 @@ export const signalMessageSchema = z.object({
 export const pingMessageSchema = z.object({
   type: z.literal("ping"),
   nonce: z.string().min(1).max(64),
+  /**
+   * 被控端随心跳上报的屏幕采集开关状态。
+   * 可选字段：旧版客户端不带，服务端原样跳过，不影响兼容性。
+   */
+  captureReady: z.boolean().optional(),
 });
 
 export const clientMessageSchema = z.discriminatedUnion("type", [
@@ -62,6 +69,11 @@ export interface PublicDevice {
    * 被 ROM 冻结、或者连着一条黑洞 TCP。控制端据此判断还能不能真的连上去。
    */
   lastSeenAt: string;
+  /**
+   * 屏幕采集开关状态（被控端随心跳上报）。
+   * 旧版客户端不上报时缺省，控制端按「未知」处理。
+   */
+  captureReady?: boolean;
 }
 
 export function parseClientMessage(raw: string, maximumBytes: number): ClientMessage {

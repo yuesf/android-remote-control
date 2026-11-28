@@ -16,6 +16,11 @@ data class DeviceInfo(
      * 显示上退回旧行为，不能因为拿不到时间就把设备标成离线。
      */
     val lastSeenAt: String? = null,
+    /**
+     * 屏幕采集开关状态，被控端随心跳上报、服务端随设备列表下发。
+     * null = 对端是旧版本，没上报过这个状态。
+     */
+    val captureReady: Boolean? = null,
 )
 
 /**
